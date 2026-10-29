@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Huddle</title>
+  <style>
+    body { margin: 0; height: 100vh; display: grid; place-content: center; gap: 12px; background: #111; color: #eee; font: 16px system-ui, sans-serif; text-align: center; }
+    input { width: 420px; padding: 12px; border-radius: 8px; border: 0; background: #222; color: inherit; font: inherit; }
+    button { padding: 12px; border-radius: 8px; border: 0; background: #2b6a3a; color: inherit; font: inherit; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h2>Huddle</h2>
+  <form id="f">
+    <p><input id="link" placeholder="Вставьте ссылку от преподавателя" autofocus></p>
+    <button>Войти</button>
+  </form>
+  <script>
+    const site = new URLSearchParams(location.search).get('site');
+    document.getElementById('f').onsubmit = (e) => {
+      e.preventDefault();
+      // Accept the whole link or just the code at its end.
+      const code = document.getElementById('link').value.trim().split('/').filter(Boolean).pop();
+      if (code) location.href = `${site}/r/${encodeURIComponent(code)}`;
+    };
+  </script>
+</body>
+</html>

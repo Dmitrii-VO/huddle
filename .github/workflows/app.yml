@@ -1,0 +1,31 @@
+name: Student app
+on: workflow_dispatch
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            cmd: npx electron-builder --mac dmg --universal
+          - os: windows-latest
+            cmd: npx electron-builder --win portable
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: ${{ matrix.cmd }} --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false # unsigned build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: huddle-${{ matrix.os }}
+          path: |
+            app/dist/*.dmg
+            app/dist/*.exe

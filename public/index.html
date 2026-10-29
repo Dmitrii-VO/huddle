@@ -14,6 +14,12 @@
 
   <main id="stage">
     <video id="screen" autoplay playsinline hidden></video>
+    <canvas id="ink"></canvas>
+    <div id="tools" hidden>
+      <button data-tool="pointer">Указка</button>
+      <button data-tool="pen">Карандаш</button>
+      <button id="clear">Стереть</button>
+    </div>
     <video id="remote" autoplay playsinline></video>
     <video id="local" autoplay playsinline muted></video>
     <div id="sharing" hidden>Вы показываете экран</div>

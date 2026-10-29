@@ -1,0 +1,26 @@
+{
+  "name": "huddle-app",
+  "productName": "Huddle",
+  "version": "0.1.0",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win portable",
+    "dist:mac": "electron-builder --mac dmg"
+  },
+  "build": {
+    "appId": "ru.huddle.app",
+    "files": ["main.js", "preload.js", "start.html"],
+    "mac": {
+      "extendInfo": {
+        "NSCameraUsageDescription": "Камера для видеозвонка",
+        "NSMicrophoneUsageDescription": "Микрофон для видеозвонка"
+      }
+    }
+  },
+  "devDependencies": {
+    "electron": "^45.1.0",
+    "electron-builder": "^26.18.0"
+  }
+}

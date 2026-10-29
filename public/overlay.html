@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>html, body { margin: 0; overflow: hidden; background: transparent; } canvas { display: block; }</style>
+</head>
+<body>
+  <canvas id="ink"></canvas>
+  <script type="module">
+    // Transparent always-on-top window in the student app, fed over IPC.
+    import { createInk } from '/ink.js';
+    const ink = createInk(document.getElementById('ink'));
+    const fit = () => ink.resize(innerWidth, innerHeight);
+    addEventListener('resize', fit);
+    fit();
+    window.huddle?.onInk(ink.apply);
+  </script>
+</body>
+</html>

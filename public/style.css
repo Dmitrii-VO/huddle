@@ -1,4 +1,5 @@
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; }
 body {
   display: grid;
@@ -15,15 +16,18 @@ button:hover { background: #3a3a3a; }
 button.off { background: #8a2b2b; }
 button.on { background: #2b6a3a; }
 
-#stage { position: relative; min-height: 0; overflow: hidden; }
+#stage { grid-area: 2 / 1; position: relative; min-height: 0; overflow: hidden; }
 video { background: #000; border-radius: 10px; }
 #screen, #remote { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 /* Remote camera shrinks to a corner while a screen is shown. */
 #stage.has-screen #remote { inset: auto; left: 12px; bottom: 12px; width: 220px; height: auto; aspect-ratio: 4/3; object-fit: cover; z-index: 1; }
 #local { position: absolute; right: 12px; bottom: 12px; width: 180px; aspect-ratio: 4/3; object-fit: cover; transform: scaleX(-1); z-index: 2; }
+#ink { position: absolute; pointer-events: none; z-index: 1; touch-action: none; }
+#ink.active { pointer-events: auto; cursor: crosshair; }
+#tools { position: absolute; top: 12px; left: 12px; display: flex; gap: 6px; z-index: 2; }
 #sharing { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: #2b6a3a; padding: 6px 12px; border-radius: 8px; z-index: 2; }
 
-#chat { grid-row: 2; width: 300px; display: flex; flex-direction: column; border-left: 1px solid #222; }
+#chat { grid-area: 2 / 2; width: 300px; display: flex; flex-direction: column; border-left: 1px solid #222; }
 #messages { flex: 1; overflow-y: auto; padding: 10px; }
 #messages p { margin: 0 0 8px; overflow-wrap: anywhere; }
 #messages .me { color: #8fc; }

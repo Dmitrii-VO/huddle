@@ -1,3 +1,5 @@
+import { createInk, isInk } from '/ink.js';
+
 const $ = (id) => document.getElementById(id);
 const room = location.pathname.split('/')[2];
 const status = (text) => ($('status').textContent = text);
@@ -104,6 +106,7 @@ function stop() {
   screenSenders = [];
   remoteStreams.clear();
   remoteCamId = remoteScreenId = null;
+  window.huddle?.ink({ t: 'clear' });
   render();
 }
 
@@ -114,6 +117,9 @@ function render() {
   if ($('remote').srcObject !== cam) $('remote').srcObject = cam;
   $('screen').hidden = !screen;
   $('stage').classList.toggle('has-screen', !!screen);
+  $('tools').hidden = !screen;
+  if (!screen) { setTool(null); ink.apply({ t: 'clear' }); }
+  fitInk();
 }
 
 // --- data channel: stream labels + chat ---
@@ -127,8 +133,55 @@ function onData(msg) {
   if (msg.t === 'cam') remoteCamId = msg.id;
   if (msg.t === 'screen') remoteScreenId = msg.id;
   if (msg.t === 'chat') addMessage(msg.text, false);
+  // Teacher's marks on my shared screen: only the desktop app can draw them over the real screen.
+  if (isInk(msg)) return window.huddle?.ink(msg);
   render();
 }
+
+// --- lesson tools: pointer and pen over the remote screen ---
+const ink = createInk($('ink'));
+let tool = null, strokeId = null;
+
+function setTool(name) {
+  tool = tool === name ? null : name;
+  for (const b of document.querySelectorAll('[data-tool]')) b.classList.toggle('on', b.dataset.tool === tool);
+  $('ink').classList.toggle('active', !!tool);
+}
+
+// Canvas covers exactly the video picture (object-fit: contain leaves letterbox bars).
+function fitInk() {
+  const v = $('screen');
+  if (v.hidden || !v.videoWidth) return ink.resize(0, 0);
+  const box = v.getBoundingClientRect(), stage = $('stage').getBoundingClientRect();
+  const scale = Math.min(box.width / v.videoWidth, box.height / v.videoHeight);
+  const w = v.videoWidth * scale, h = v.videoHeight * scale;
+  $('ink').style.left = box.left - stage.left + (box.width - w) / 2 + 'px';
+  $('ink').style.top = box.top - stage.top + (box.height - h) / 2 + 'px';
+  ink.resize(w, h);
+}
+$('screen').addEventListener('resize', fitInk);
+addEventListener('resize', fitInk);
+
+function mark(msg) {
+  ink.apply(msg);
+  sendData(msg);
+}
+const at = (e) => ({ x: e.offsetX / $('ink').clientWidth, y: e.offsetY / $('ink').clientHeight });
+
+$('ink').onpointerdown = (e) => {
+  if (tool !== 'pen') return;
+  $('ink').setPointerCapture(e.pointerId);
+  strokeId = Math.random().toString(36).slice(2);
+  mark({ t: 'line', id: strokeId, ...at(e) });
+};
+$('ink').onpointermove = (e) => {
+  if (tool === 'pointer') mark({ t: 'ptr', ...at(e) });
+  if (tool === 'pen' && strokeId) mark({ t: 'line', id: strokeId, ...at(e) });
+};
+$('ink').onpointerup = () => (strokeId = null);
+$('ink').onpointerleave = () => tool === 'pointer' && mark({ t: 'ptr', x: null, y: null });
+for (const b of document.querySelectorAll('[data-tool]')) b.onclick = () => setTool(b.dataset.tool);
+$('clear').onclick = () => mark({ t: 'clear' });
 
 function addMessage(text, mine, delivered = true) {
   const p = document.createElement('p');
@@ -159,6 +212,7 @@ function stopShare() {
   screenSenders = [];
   screenStream = null;
   sendData({ t: 'screen', id: null });
+  window.huddle?.shareEnded();
   $('share').classList.remove('on');
   $('sharing').hidden = true;
 }
