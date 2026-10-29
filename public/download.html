@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Скачать Huddle</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; background: #111; color: #eee; font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { max-width: 560px; width: 100%; }
+    h1 { margin: 0 0 4px; font-size: 28px; }
+    .sub { margin: 0 0 24px; color: #999; }
+    .btn { display: inline-block; padding: 14px 22px; border-radius: 10px; background: #0e71eb; color: #fff; font-weight: 600; text-decoration: none; }
+    .btn:hover { background: #0b5fc6; }
+    .other { margin: 12px 0 28px; font-size: 14px; color: #999; }
+    .other a { color: #6fb3ff; }
+    ol { padding-left: 22px; }
+    li { margin-bottom: 10px; }
+    code { display: block; margin-top: 6px; padding: 8px 10px; border-radius: 6px; background: #222; font-size: 14px; overflow-wrap: anywhere; user-select: all; }
+    button { margin-top: 6px; padding: 6px 12px; border: 0; border-radius: 6px; background: #2c2c2c; color: inherit; font: inherit; font-size: 14px; cursor: pointer; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Huddle</h1>
+    <p class="sub">Видеоуроки: демонстрация экрана, рисование поверх слайдов, удалённое управление.</p>
+
+    <a id="btn" class="btn" href="#">Скачать</a>
+    <p class="other">Другая система: <a href="https://github.com/Dmitrii-VO/huddle/releases/download/app-latest/Huddle-mac-universal.dmg">для Mac</a> · <a href="https://github.com/Dmitrii-VO/huddle/releases/download/app-latest/Huddle-win-x64.exe">для Windows</a></p>
+
+    <section id="mac" hidden>
+      <h2>Установка на Mac</h2>
+      <ol>
+        <li>Откройте скачанный файл <b>Huddle-mac-universal.dmg</b> и перетащите Huddle в папку «Программы».</li>
+        <li>Откройте Терминал (⌘ + пробел, наберите «Терминал»), вставьте команду и нажмите Enter — она снимает запрет на запуск приложения из интернета:
+          <code id="cmd">xattr -cr /Applications/Huddle.app</code>
+          <button id="copy">Скопировать команду</button>
+        </li>
+        <li>Запустите Huddle из «Программ». При первой демонстрации экрана macOS попросит разрешения «Запись экрана», а при удалённом управлении — «Универсальный доступ»: включите Huddle в настройках и перезапустите приложение.</li>
+      </ol>
+      <p class="other">Нужна macOS 12 Monterey или новее.</p>
+    </section>
+
+    <section id="win" hidden>
+      <h2>Запуск на Windows</h2>
+      <ol>
+        <li>Запустите скачанный файл <b>Huddle-win-x64.exe</b> — устанавливать ничего не нужно.</li>
+        <li>Если Windows покажет синее окно «Система Windows защитила ваш компьютер» — нажмите «Подробнее», затем «Выполнить в любом случае».</li>
+        <li>Если антивирус (Dr.Web, Касперский) спросит про доступ в интернет — разрешите.</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>Дальше</h2>
+      <p>В приложении нажмите «Создать новый урок» или вставьте ссылку на урок, которую вам прислали.</p>
+    </section>
+  </main>
+  <script>
+    const BASE = 'https://github.com/Dmitrii-VO/huddle/releases/download/app-latest/';
+    const ua = navigator.userAgent;
+    const os = /Mac/.test(ua) && !/iPhone|iPad/.test(ua) ? 'mac' : /Windows/.test(ua) ? 'win' : null;
+    const btn = document.getElementById('btn');
+    if (os) {
+      const file = os === 'mac' ? 'Huddle-mac-universal.dmg' : 'Huddle-win-x64.exe';
+      btn.href = BASE + file;
+      btn.textContent = os === 'mac' ? 'Скачать для Mac' : 'Скачать для Windows';
+      document.getElementById(os).hidden = false;
+      setTimeout(() => (location.href = BASE + file), 800); // start right away; the button is the fallback
+    } else {
+      btn.hidden = true; // phone / Linux: show both links, no guessing
+      document.getElementById('mac').hidden = document.getElementById('win').hidden = false;
+    }
+    document.getElementById('copy').onclick = async (e) => {
+      await navigator.clipboard.writeText(document.getElementById('cmd').textContent);
+      e.target.textContent = 'Скопировано';
+    };
+  </script>
+</body>
+</html>

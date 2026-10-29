@@ -37,7 +37,10 @@ const server = http.createServer((req, res) => {
     return res.end(JSON.stringify({ iceServers: iceServers() }));
   }
   const name = path.basename(url.pathname);
-  const file = url.pathname.startsWith('/r/') || !FILES.has(name) ? 'index.html' : name;
+  const file = url.pathname.startsWith('/r/') ? 'index.html'
+    : FILES.has(name) ? name
+    : FILES.has(name + '.html') ? name + '.html' // /download -> download.html
+    : 'index.html';
   res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream' });
   fs.createReadStream(path.join(PUBLIC, file)).pipe(res);
 });

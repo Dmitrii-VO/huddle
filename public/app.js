@@ -344,6 +344,9 @@ setInterval(async () => {
 }, 2000);
 $('net').onclick = () => toast(netInfo);
 
+// In a desktop browser, point to the app (phones can't install it).
+$('get-app').hidden = !!window.huddle || /iPhone|iPad|Android/.test(navigator.userAgent);
+
 $('copy').onclick = async () => {
   await navigator.clipboard.writeText(location.href);
   toast('Ссылка скопирована — отправьте её ученику');
