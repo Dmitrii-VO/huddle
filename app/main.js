@@ -3,6 +3,7 @@
 // and letting the other side drive mouse and keyboard after the user agrees.
 const { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, screen, session, shell, systemPreferences } = require('electron');
 const path = require('node:path');
+const initUpdates = require('./updater');
 
 const SITE = process.env.HUDDLE_URL || 'https://huddle.runterra.ru';
 const preload = path.join(__dirname, 'preload.js');
@@ -28,7 +29,10 @@ function createWindow() {
     if (!url.startsWith(SITE + '/') && !url.startsWith('file:')) e.preventDefault();
   });
   win.webContents.on('did-navigate', () => { consentGen++; setControl(false); });
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith(SITE + '/download')) shell.openExternal(url); // update link from the page
+    return { action: 'deny' };
+  });
   win.on('closed', () => { overlay?.destroy(); bar?.destroy(); app.quit(); });
 }
 
@@ -210,7 +214,9 @@ app.whenReady().then(() => {
   ipcMain.on('control-stop', (e) => fromWin(e) && setControl(false));
   ipcMain.on('input', (e, m) => fromWin(e) && applyInput(m));
 
+  ipcMain.on('version', (e) => (e.returnValue = app.getVersion()));
   createWindow();
+  initUpdates({ getWin: () => win, isBusy: () => !!sharedDisplay || control, site: SITE });
 });
 
 app.on('will-quit', () => globalShortcut.unregisterAll());

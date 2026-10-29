@@ -27,7 +27,7 @@
     <p class="sub">Видеоуроки: демонстрация экрана, рисование поверх слайдов, удалённое управление.</p>
 
     <a id="btn" class="btn" href="#">Скачать</a>
-    <p class="other">Другая система: <a href="https://github.com/Dmitrii-VO/huddle/releases/download/app-latest/Huddle-mac-universal.dmg">для Mac</a> · <a href="https://github.com/Dmitrii-VO/huddle/releases/download/app-latest/Huddle-win-x64.exe">для Windows</a></p>
+    <p class="other">Другая система: <a href="https://github.com/Dmitrii-VO/huddle/releases/latest/download/Huddle-mac-universal.dmg">для Mac</a> · <a href="https://github.com/Dmitrii-VO/huddle/releases/latest/download/Huddle-win-Setup.exe">для Windows</a></p>
 
     <section id="mac" hidden>
       <h2>Установка на Mac</h2>
@@ -45,7 +45,7 @@
     <section id="win" hidden>
       <h2>Запуск на Windows</h2>
       <ol>
-        <li>Запустите скачанный файл <b>Huddle-win-x64.exe</b> — устанавливать ничего не нужно.</li>
+        <li>Запустите скачанный файл <b>Huddle-win-Setup.exe</b> — установка займёт несколько секунд, без прав администратора; Huddle появится на рабочем столе. Дальше он обновляется сам.</li>
         <li>Если Windows покажет синее окно «Система Windows защитила ваш компьютер» — нажмите «Подробнее», затем «Выполнить в любом случае».</li>
         <li>Если антивирус (Dr.Web, Касперский) спросит про доступ в интернет — разрешите.</li>
       </ol>
@@ -57,12 +57,12 @@
     </section>
   </main>
   <script>
-    const BASE = 'https://github.com/Dmitrii-VO/huddle/releases/download/app-latest/';
+    const BASE = 'https://github.com/Dmitrii-VO/huddle/releases/latest/download/';
     const ua = navigator.userAgent;
     const os = /Mac/.test(ua) && !/iPhone|iPad/.test(ua) ? 'mac' : /Windows/.test(ua) ? 'win' : null;
     const btn = document.getElementById('btn');
     if (os) {
-      const file = os === 'mac' ? 'Huddle-mac-universal.dmg' : 'Huddle-win-x64.exe';
+      const file = os === 'mac' ? 'Huddle-mac-universal.dmg' : 'Huddle-win-Setup.exe';
       btn.href = BASE + file;
       btn.textContent = os === 'mac' ? 'Скачать для Mac' : 'Скачать для Windows';
       document.getElementById(os).hidden = false;

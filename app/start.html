@@ -19,6 +19,7 @@
   </form>
   <p>или</p>
   <button id="new" class="new">Создать новый урок</button>
+  <p id="ver"></p>
   <script>
     const site = new URLSearchParams(location.search).get('site');
     document.getElementById('f').onsubmit = (e) => {
@@ -27,6 +28,7 @@
       const code = document.getElementById('link').value.trim().split('/').filter(Boolean).pop();
       if (code) location.href = `${site}/r/${encodeURIComponent(code)}`;
     };
+    document.getElementById('ver').textContent = 'Версия ' + (window.huddle?.version ?? '');
     document.getElementById('new').onclick = () => (location.href = site + '/'); // server redirects to a fresh room
   </script>
 </body>

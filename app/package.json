@@ -1,37 +1,55 @@
 {
   "name": "huddle-app",
   "productName": "Huddle",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dist:win": "electron-builder --win portable",
+    "dist:win": "electron-builder --win nsis",
     "dist:mac": "electron-builder --mac dmg"
   },
   "build": {
     "appId": "ru.huddle.app",
-    "artifactName": "Huddle-${os}-${arch}.${ext}",
     "files": [
       "main.js",
       "preload.js",
       "input.js",
       "bar.html",
-      "start.html"
+      "start.html",
+      "updater.js"
     ],
     "mac": {
       "x64ArchFiles": "**/node_modules/@koromix/koffi-darwin-*/**",
       "extendInfo": {
         "NSCameraUsageDescription": "Камера для видеозвонка",
         "NSMicrophoneUsageDescription": "Микрофон для видеозвонка"
+      },
+      "artifactName": "Huddle-mac-universal.${ext}"
+    },
+    "win": {
+      "target": "nsis",
+      "artifactName": "Huddle-win-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Dmitrii-VO",
+        "repo": "huddle",
+        "releaseType": "release"
       }
-    }
+    ]
   },
   "devDependencies": {
     "electron": "^45.1.0",
     "electron-builder": "^26.18.0"
   },
   "dependencies": {
+    "electron-updater": "^6.8.11",
     "koffi": "^3.3.5"
   }
 }

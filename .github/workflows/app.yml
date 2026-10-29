@@ -1,17 +1,32 @@
-name: Student app
-on: workflow_dispatch
+name: App release
+# Push a tag vX.Y.Z (sh deploy/release-app.sh X.Y.Z) -> draft release -> both builds upload -> publish.
+# Publishing last means "latest" never points at a release without files; the app's updater reads "latest".
+on:
+  push:
+    tags: ['v*']
 permissions:
   contents: write
 
 jobs:
+  draft:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag must match app/package.json version
+        run: test "v$(node -p "require('./app/package.json').version")" = "$GITHUB_REF_NAME"
+      - run: gh release create "$GITHUB_REF_NAME" --draft --title "Huddle $GITHUB_REF_NAME" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   build:
+    needs: draft
     strategy:
       matrix:
         include:
           - os: macos-latest
             cmd: npx electron-builder --mac dmg --universal
           - os: windows-latest
-            cmd: npx electron-builder --win portable
+            cmd: npx electron-builder --win nsis
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -28,8 +43,16 @@ jobs:
       - run: ${{ matrix.cmd }} --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false # unsigned build
-      # Releases, not artifacts: the account's artifact storage quota is shared and full.
-      - run: shopt -s nullglob; gh release upload app-latest dist/*.dmg dist/*.exe --clobber
+      # latest.yml + .blockmap are what the Windows updater reads.
+      - run: shopt -s nullglob; gh release upload "$GITHUB_REF_NAME" dist/*.dmg dist/*.exe dist/*.blockmap dist/latest*.yml --clobber
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest
         env:
           GH_TOKEN: ${{ github.token }}

@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const on = (channel) => (fn) => ipcRenderer.on(channel, (_e, data) => fn(data));
 
 contextBridge.exposeInMainWorld('huddle', {
+  version: ipcRenderer.sendSync('version'),
   // page
   ink: (msg) => ipcRenderer.send('ink', msg),
   shareEnded: () => ipcRenderer.send('share-ended'),

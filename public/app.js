@@ -344,6 +344,15 @@ setInterval(async () => {
 }, 2000);
 $('net').onclick = () => toast(netInfo);
 
+// Desktop app too old for this page (missing bridge features): ask to update.
+const MIN_APP = '0.2.0';
+const olderThan = (a, b) => {
+  const [x, y] = [a, b].map((v) => v.split('.').map(Number));
+  const i = x.findIndex((n, k) => n !== y[k]);
+  return i !== -1 && x[i] < y[i];
+};
+if (window.huddle && olderThan(window.huddle.version ?? '0.1.0', MIN_APP)) $('old-app').hidden = false; // 0.1.x had no version
+
 // In a desktop browser, point to the app (phones can't install it).
 $('get-app').hidden = !!window.huddle || /iPhone|iPad|Android/.test(navigator.userAgent);
 
