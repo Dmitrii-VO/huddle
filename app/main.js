@@ -1,10 +1,12 @@
 // Huddle desktop app: the website in a window, plus what a browser can't do while sharing the screen —
 // a click-through overlay for annotations, a floating control bar over full-screen slides,
 // and letting the other side drive mouse and keyboard after the user agrees.
-const { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, screen, session, shell, systemPreferences } = require('electron');
+const { app, BrowserWindow, desktopCapturer, globalShortcut, ipcMain, nativeTheme, screen, session, shell, systemPreferences } = require('electron');
 const path = require('node:path');
 const os = require('node:os');
 const initUpdates = require('./updater');
+const { ask } = require('./dialogs');
+const recent = require('./recent');
 
 const SITE = process.env.HUDDLE_URL || 'https://huddle.runterra.ru';
 const preload = path.join(__dirname, 'preload.js');
@@ -32,13 +34,18 @@ function appLog(m) {
 }
 
 function createWindow() {
-  win = new BrowserWindow({ width: 1200, height: 800, title: 'Huddle', autoHideMenuBar: true, webPreferences: { preload } });
+  win = new BrowserWindow({ width: 1200, height: 800, minWidth: 640, minHeight: 480, title: 'Huddle', autoHideMenuBar: true, backgroundColor: '#111111', webPreferences: { preload } });
   win.loadFile(path.join(__dirname, 'start.html'), { query: { site: SITE } });
   // Remote pages get the preload API, so never leave our site.
   win.webContents.on('will-navigate', (e, url) => {
     if (!url.startsWith(SITE + '/') && !url.startsWith('file:')) e.preventDefault();
   });
-  win.webContents.on('did-navigate', () => { consentGen++; setControl(false); });
+  win.webContents.on('did-navigate', (_e, url) => {
+    consentGen++;
+    setControl(false);
+    const code = url.startsWith(SITE + '/r/') && url.slice(SITE.length + 3).split(/[?#]/)[0];
+    if (code) recent.visit(code);
+  });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith(SITE + '/download')) shell.openExternal(url); // update link from the page
     return { action: 'deny' };
@@ -126,22 +133,22 @@ async function askControl() {
   if (!sharedDisplay) return false;
   const gen = consentGen;
   if (isMac && !systemPreferences.isTrustedAccessibilityClient(true)) {
-    await dialog.showMessageBox(win, {
-      type: 'warning',
-      message: 'Разрешите Huddle управление компьютером',
+    await ask({
+      parent: win, onTop: true, kind: 'warn',
+      title: 'Разрешите Huddle управление компьютером',
       detail: 'Системные настройки → Конфиденциальность и безопасность → Универсальный доступ: включите Huddle, затем закройте и снова откройте приложение.',
+      buttons: ['Понятно'],
     });
     return false;
   }
-  const { response } = process.env.HUDDLE_TEST_ALLOW_CONTROL
-    ? { response: 0 }
-    : await dialog.showMessageBox(win, {
-        type: 'question',
-        message: 'Собеседник просит управление компьютером',
+  // onTop: during a full-screen slideshow a window-attached dialog would hide behind the slides
+  const response = process.env.HUDDLE_TEST_ALLOW_CONTROL
+    ? 0
+    : await ask({
+        parent: win, onTop: true, kind: 'ask',
+        title: 'Собеседник просит управление компьютером',
         detail: `Он сможет двигать мышь, нажимать и печатать. Отключить можно в любой момент: ${STOP_LABEL}, кнопка в окне Huddle или остановка демонстрации.`,
         buttons: ['Разрешить', 'Отклонить'],
-        defaultId: 1,
-        cancelId: 1,
       });
   setControl(response === 0 && !!sharedDisplay && gen === consentGen);
   return control;
@@ -169,6 +176,7 @@ function applyInput(m) {
 }
 
 app.whenReady().then(() => {
+  nativeTheme.themeSource = 'dark'; // dark title bar and system UI on Windows / macOS
   session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => {
     cb(wc.getURL().startsWith(SITE + '/') && ['media', 'display-capture', 'clipboard-sanitized-write'].includes(permission));
   });
@@ -177,9 +185,9 @@ app.whenReady().then(() => {
     const display = screen.getPrimaryDisplay();
     const sources = await desktopCapturer.getSources({ types: ['screen'] }); // on macOS this also adds the app to the Screen Recording list
     if (isMac && systemPreferences.getMediaAccessStatus('screen') !== 'granted') {
-      const { response } = await dialog.showMessageBox(win, {
-        type: 'warning',
-        message: 'Разрешите Huddle запись экрана',
+      const response = await ask({
+        parent: win, kind: 'warn',
+        title: 'Разрешите Huddle запись экрана',
         detail: 'Системные настройки → Конфиденциальность и безопасность → Запись экрана: включите Huddle, затем закройте и снова откройте приложение.',
         buttons: ['Открыть настройки', 'Отмена'],
       });
@@ -227,8 +235,13 @@ app.whenReady().then(() => {
   ipcMain.on('version', (e) => (e.returnValue = app.getVersion()));
   createWindow();
   ipcMain.handle('app-logs', (e) => (fromWin(e) ? appLogs : []));
+  // start screen only (a local file): the remote site has no business editing this list
+  const fromStart = (e) => fromWin(e) && e.sender.getURL().startsWith('file:');
+  ipcMain.handle('recent', (e) => (fromStart(e) ? recent.load() : []));
+  ipcMain.on('recent-rename', (e, code, name) => fromStart(e) && recent.rename(code, name));
+  ipcMain.on('recent-remove', (e, code) => fromStart(e) && recent.remove(code));
   appLog({ start: app.getVersion(), os: `${process.platform} ${os.release()} ${process.arch}`, packaged: app.isPackaged });
-  initUpdates({ getWin: () => win, isBusy: () => !!sharedDisplay || control, site: SITE, log: appLog });
+  initUpdates({ getWin: () => win, isBusy: () => !!sharedDisplay || control, site: SITE, log: appLog, ask });
 });
 
 app.on('will-quit', () => globalShortcut.unregisterAll());

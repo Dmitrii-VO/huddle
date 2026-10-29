@@ -4,32 +4,122 @@
   <meta charset="utf-8">
   <title>Huddle</title>
   <style>
-    body { margin: 0; height: 100vh; display: grid; place-content: center; gap: 12px; background: #111; color: #eee; font: 16px system-ui, sans-serif; text-align: center; }
-    input { width: 420px; padding: 12px; border-radius: 8px; border: 0; background: #222; color: inherit; font: inherit; }
-    button { padding: 12px; border-radius: 8px; border: 0; background: #2b6a3a; color: inherit; font: inherit; cursor: pointer; }
-    p { margin: 0; color: #888; }
-    .new { background: #0e71eb; }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body { display: grid; place-items: center; padding: 24px; background: #111; color: #eee; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { width: min(440px, 100%); }
+    .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
+    .logo { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; background: linear-gradient(135deg, #0e71eb, #3aa0ff); }
+    .logo svg { width: 24px; height: 24px; fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    h1 { margin: 0; font-size: 22px; }
+    .sub { margin: 0; color: #888; font-size: 13px; }
+    button, input { font: inherit; color: inherit; border: 0; border-radius: 10px; }
+    button { cursor: pointer; }
+    .primary { width: 100%; padding: 14px; background: #0e71eb; color: #fff; font-weight: 600; font-size: 16px; }
+    .primary:hover { background: #0b5fc6; }
+    .divider { display: flex; align-items: center; gap: 12px; margin: 22px 0 12px; color: #666; font-size: 13px; }
+    .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: #2a2a2a; }
+    form { display: flex; gap: 8px; }
+    form input { flex: 1; min-width: 0; padding: 12px 14px; background: #1e1e1e; border: 1px solid #2c2c2c; }
+    form input:focus { outline: none; border-color: #0e71eb; }
+    form button { padding: 0 18px; background: #2c2c2c; font-weight: 600; }
+    form button:hover { background: #383838; }
+    h2 { margin: 30px 0 8px; font-size: 13px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.04em; }
+    ul { list-style: none; margin: 0; padding: 0; }
+    li { display: flex; align-items: center; gap: 4px; padding: 4px 4px 4px 14px; border-radius: 10px; background: #1a1a1a; margin-bottom: 6px; }
+    li:hover { background: #222; }
+    .name { flex: 1; min-width: 0; padding: 8px 0; text-align: left; background: none; }
+    .name b { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .name small { color: #777; }
+    .icon { width: 34px; height: 34px; border-radius: 8px; background: none; color: #888; }
+    .icon:hover { background: #2e2e2e; color: #eee; }
+    li input { flex: 1; padding: 8px 10px; background: #111; border: 1px solid #0e71eb; }
+    .empty { color: #666; font-size: 14px; }
+    footer { margin-top: 28px; color: #555; font-size: 12px; text-align: center; }
   </style>
 </head>
 <body>
-  <h2>Huddle</h2>
-  <form id="f">
-    <p><input id="link" placeholder="Вставьте ссылку на урок" autofocus></p>
-    <button>Войти</button>
-  </form>
-  <p>или</p>
-  <button id="new" class="new">Создать новый урок</button>
-  <p id="ver"></p>
+  <main>
+    <div class="brand">
+      <div class="logo"><svg viewBox="0 0 24 24"><path d="m16 13 5.2 3.5a.5.5 0 0 0 .8-.4V7.9a.5.5 0 0 0-.8-.4L16 10.5"/><rect x="2" y="6" width="14" height="12" rx="2"/></svg></div>
+      <div><h1>Huddle</h1><p class="sub">Онлайн-уроки: демонстрация, рисование, управление</p></div>
+    </div>
+
+    <button id="new" class="primary">Создать урок</button>
+
+    <div class="divider">или войти по ссылке</div>
+    <form id="f">
+      <input id="link" placeholder="Вставьте ссылку на урок" autofocus>
+      <button>Войти</button>
+    </form>
+
+    <h2>Недавние уроки</h2>
+    <ul id="recent"></ul>
+
+    <footer id="ver"></footer>
+  </main>
   <script>
     const site = new URLSearchParams(location.search).get('site');
-    document.getElementById('f').onsubmit = (e) => {
+    const go = (code) => (location.href = `${site}/r/${encodeURIComponent(code)}`);
+    const $ = (id) => document.getElementById(id);
+
+    $('new').onclick = () => (location.href = site + '/'); // server redirects to a fresh room
+    $('f').onsubmit = (e) => {
       e.preventDefault();
       // Accept the whole link or just the code at its end.
-      const code = document.getElementById('link').value.trim().split('/').filter(Boolean).pop();
-      if (code) location.href = `${site}/r/${encodeURIComponent(code)}`;
+      const code = $('link').value.trim().split('/').filter(Boolean).pop();
+      if (code) go(code);
     };
-    document.getElementById('ver').textContent = 'Версия ' + (window.huddle?.version ?? '');
-    document.getElementById('new').onclick = () => (location.href = site + '/'); // server redirects to a fresh room
+    $('ver').textContent = `Версия ${window.huddle?.version ?? ''}`;
+
+    const when = (t) => new Date(t).toLocaleString('ru', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+    const icon = (title, d) => {
+      const b = document.createElement('button');
+      b.className = 'icon';
+      b.title = title;
+      b.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${d}"/></svg>`;
+      return b;
+    };
+
+    async function render() {
+      const list = (await window.huddle?.recent?.()) ?? [];
+      const ul = $('recent');
+      ul.replaceChildren();
+      if (!list.length) {
+        ul.innerHTML = '<li class="empty">Здесь появятся уроки, в которых вы были. Их можно переименовать, например «Маша, 2 класс».</li>';
+        return;
+      }
+      for (const r of list) {
+        const li = document.createElement('li');
+        const open = document.createElement('button');
+        open.className = 'name';
+        open.title = 'Войти в этот урок';
+        const b = document.createElement('b');
+        b.textContent = r.name || 'Урок без названия';
+        const small = document.createElement('small');
+        small.textContent = when(r.at);
+        open.append(b, small);
+        open.onclick = () => go(r.code);
+
+        const edit = icon('Переименовать', 'M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z');
+        edit.onclick = () => {
+          const input = document.createElement('input');
+          input.value = r.name;
+          input.placeholder = 'Например: Маша, 2 класс';
+          const commit = () => { window.huddle.renameRecent(r.code, input.value.trim()); render(); };
+          input.onkeydown = (e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') render(); };
+          input.onblur = commit;
+          li.replaceChildren(input);
+          input.focus();
+        };
+        const del = icon('Убрать из списка', 'M18 6 6 18M6 6l12 12');
+        del.onclick = () => { window.huddle.removeRecent(r.code); render(); };
+
+        li.append(open, edit, del);
+        ul.append(li);
+      }
+    }
+    render();
   </script>
 </body>
 </html>

@@ -22,6 +22,13 @@ contextBridge.exposeInMainWorld('huddle', {
   onTool: on('tool'),
   onCmd: on('cmd'),
   inkOut: (msg) => ipcRenderer.send('ink-out', msg),
+  // start screen
+  recent: () => ipcRenderer.invoke('recent'),
+  renameRecent: (code, name) => ipcRenderer.send('recent-rename', code, name),
+  removeRecent: (code) => ipcRenderer.send('recent-remove', code),
+  // prompt window
+  promptAnswer: (i) => ipcRenderer.send('prompt-answer', i),
+  promptSize: (h) => ipcRenderer.send('prompt-size', h),
   // bar
   bar: (action) => ipcRenderer.send('bar', action),
   onState: on('state'),

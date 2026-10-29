@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <style>
+    html, body { margin: 0; background: #1c1c1c; color: #eee; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; user-select: none; }
+    .box { display: grid; grid-template-columns: 40px 1fr; gap: 4px 14px; padding: 22px 24px 20px; border: 1px solid #333; }
+    .icon { grid-row: span 2; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: #0e71eb; font-weight: 700; font-size: 20px; }
+    .warn .icon { background: #b8860b; }
+    .ask .icon { background: #2b8a3e; }
+    h1 { margin: 0; font-size: 17px; font-weight: 600; -webkit-app-region: drag; }
+    p { margin: 0; color: #aaa; }
+    .buttons { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+    button { padding: 9px 18px; border: 0; border-radius: 8px; background: #2c2c2c; color: inherit; font: inherit; font-weight: 600; cursor: pointer; }
+    button:hover { background: #383838; }
+    button.primary { background: #0e71eb; color: #fff; }
+    button.primary:hover { background: #0b5fc6; }
+    button:focus-visible { outline: 2px solid #6fb3ff; outline-offset: 2px; }
+  </style>
+</head>
+<body>
+  <div class="box" id="box">
+    <div class="icon" id="icon"></div>
+    <h1 id="title"></h1>
+    <p id="detail"></p>
+    <div class="buttons" id="buttons"></div>
+  </div>
+  <script>
+    const { title, detail, buttons, kind } = JSON.parse(new URLSearchParams(location.search).get('data'));
+    document.getElementById('box').className = 'box ' + kind;
+    document.getElementById('icon').textContent = { info: 'i', warn: '!', ask: '?' }[kind] ?? 'i';
+    document.getElementById('title').textContent = title;
+    document.getElementById('detail').textContent = detail;
+    const cancel = buttons.length - 1;
+    // Cancel-ish button on the left of the primary one, like macOS / modern Windows.
+    buttons.map((label, i) => [label, i]).reverse().forEach(([label, i]) => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      if (i === 0) b.className = 'primary';
+      b.onclick = () => window.huddle.promptAnswer(i);
+      document.getElementById('buttons').append(b);
+    });
+    addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') window.huddle.promptAnswer(cancel);
+    });
+    document.querySelector('.primary').focus();
+    window.huddle.promptSize(document.getElementById('box').getBoundingClientRect().height);
+  </script>
+</body>
+</html>

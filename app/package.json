@@ -17,7 +17,10 @@
       "input.js",
       "bar.html",
       "start.html",
-      "updater.js"
+      "updater.js",
+      "dialogs.js",
+      "prompt.html",
+      "recent.js"
     ],
     "mac": {
       "x64ArchFiles": "**/node_modules/@koromix/koffi-darwin-*/**",

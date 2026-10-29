@@ -1,7 +1,7 @@
 // Updates from GitHub Releases (tags vX.Y.Z).
 // Windows (NSIS install): downloads in the background, offers a restart, else installs on quit.
 // macOS: an unsigned app can't replace itself, so we only offer to download the new version.
-const { app, dialog, shell } = require('electron');
+const { app, shell } = require('electron');
 const { autoUpdater } = require('electron-updater');
 
 const REPO = 'Dmitrii-VO/huddle';
@@ -14,7 +14,7 @@ const newer = (a, b) => {
   return false;
 };
 
-module.exports = function initUpdates({ getWin, isBusy, site, log }) {
+module.exports = function initUpdates({ getWin, isBusy, site, log, ask }) {
   if (!app.isPackaged) return log({ update: 'skipped (dev build)' });
   let offered = null; // version already offered this session: ask once, not every 6 hours
 
@@ -32,13 +32,11 @@ module.exports = function initUpdates({ getWin, isBusy, site, log }) {
       if (offered === version) return;
       offered = version;
       whenFree(async () => {
-        const { response } = await dialog.showMessageBox(getWin(), {
-          type: 'info',
-          message: `Готова новая версия Huddle ${version}`,
-          detail: `У вас ${app.getVersion()}. Обновление уже скачано — перезапуск займёт несколько секунд. Если выберете «Позже», оно установится при следующем закрытии приложения.`,
+        const response = await ask({
+          parent: getWin(),
+          title: `Готова новая версия Huddle ${version}`,
+          detail: `У вас ${app.getVersion()}. Обновление уже скачано, перезапуск займёт несколько секунд. Если выберете «Позже», оно установится при следующем закрытии приложения.`,
           buttons: ['Перезапустить и обновить', 'Позже'],
-          defaultId: 0,
-          cancelId: 1,
         });
         log({ update: response === 0 ? 'restart now' : 'later' });
         if (response === 0) autoUpdater.quitAndInstall();
@@ -59,13 +57,11 @@ module.exports = function initUpdates({ getWin, isBusy, site, log }) {
       if (!latest || !newer(latest, app.getVersion()) || offered === latest) return;
       offered = latest;
       whenFree(async () => {
-        const { response } = await dialog.showMessageBox(getWin(), {
-          type: 'info',
-          message: `Доступна новая версия Huddle ${latest}`,
-          detail: `У вас ${app.getVersion()}. Скачайте новую версию и замените приложение в папке «Программы» (уроки и ссылки сохранятся).`,
+        const response = await ask({
+          parent: getWin(),
+          title: `Доступна новая версия Huddle ${latest}`,
+          detail: `У вас ${app.getVersion()}. Скачайте новую версию и замените приложение в папке «Программы», уроки и ссылки сохранятся.`,
           buttons: ['Скачать', 'Позже'],
-          defaultId: 0,
-          cancelId: 1,
         });
         log({ update: response === 0 ? 'download' : 'later', version: latest });
         if (response === 0) shell.openExternal(`${site}/download`);
