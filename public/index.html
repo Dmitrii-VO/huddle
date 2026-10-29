@@ -89,6 +89,9 @@
         <span>Отключить управление</span></button>
     </div>
     <div class="group">
+      <button id="settings-open" class="tb">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        <span>Настройки</span></button>
       <button id="view" class="tb">
         <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
         <span>Галерея</span></button>
@@ -98,6 +101,24 @@
       <button id="leave" class="leave">Выйти</button>
     </div>
   </footer>
+
+  <div id="settings" class="modal" hidden>
+    <div class="card">
+      <header>Настройки <button id="settings-close" title="Закрыть">×</button></header>
+      <label>Камера <select id="set-cam"></select></label>
+      <label>Микрофон <select id="set-mic"></select></label>
+      <fieldset>
+        <legend>Качество демонстрации экрана</legend>
+        <label class="radio"><input type="radio" name="set-quality" value="auto"> <b>Авто</b> <small>чётко, а если компьютер не успевает — само снижает качество</small></label>
+        <label class="radio"><input type="radio" name="set-quality" value="sharp"> <b>Чёткость</b> <small>слайды и документы: 1080p, 15 кадров</small></label>
+        <label class="radio"><input type="radio" name="set-quality" value="smooth"> <b>Плавность</b> <small>видео и анимации: 720p, 30 кадров</small></label>
+        <label class="radio"><input type="radio" name="set-quality" value="eco"> <b>Экономия</b> <small>слабый компьютер или интернет: 720p, 8 кадров</small></label>
+      </fieldset>
+      <label>Кодек видео <select id="set-codec"></select></label>
+      <label class="radio"><input type="checkbox" id="set-lowlat"> <b>Низкая задержка</b> <small>меньше запас на приёме; выключите, если картинка рвётся на плохом интернете</small></label>
+      <p id="set-now"></p>
+    </div>
+  </div>
 
   <div id="toast" hidden></div>
   <a id="old-app" href="/download" target="_blank" hidden>Приложение устарело — некоторые функции не работают. Скачайте новую версию →</a>

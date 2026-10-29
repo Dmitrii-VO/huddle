@@ -1,6 +1,8 @@
 import { isInk } from '/ink.js';
 import { createTools } from '/tools.js';
 import { startDiag } from '/diag.js';
+import { PRESETS, applyScreen, autoCodec, autoStart, preferCodec, probeCodecs, watchScreen } from '/quality.js';
+import { initSettings, loadSettings } from '/settings.js';
 
 const $ = (id) => document.getElementById(id);
 const room = location.pathname.split('/')[2];
@@ -18,8 +20,12 @@ function toast(text) {
   toastTimer = setTimeout(() => ($('toast').hidden = true), 3500);
 }
 
+const settings = loadSettings();
 const { iceServers } = await (await fetch('/config')).json();
 const local = await getMedia();
+const caps = await probeCodecs();
+let codec = settings.codec === 'auto' ? autoCodec(caps) : settings.codec;
+let autoStep = autoStart(); // auto-quality ladder position, moved by the watchdog
 $('local').srcObject = local;
 
 let pc = null, dc = null, polite = false, makingOffer = false, ignoreOffer = false;
@@ -27,9 +33,10 @@ let screenStream = null, screenSenders = [];
 const remoteStreams = new Map();
 let remoteCamId = null, remoteScreenId = null, remoteState = { mic: true, cam: true };
 
-// Camera may be missing or denied: fall back to audio, then to nothing.
+// Camera may be missing or denied: fall back to audio, then to nothing. Saved devices are preferred, not required.
 async function getMedia() {
-  for (const c of [{ video: true, audio: true }, { audio: true }]) {
+  const pick = (id) => (id ? { deviceId: { ideal: id } } : true);
+  for (const c of [{ video: pick(settings.cam), audio: pick(settings.mic) }, { audio: pick(settings.mic) }]) {
     try { return await navigator.mediaDevices.getUserMedia(c); } catch {}
   }
   return new MediaStream();
@@ -42,6 +49,7 @@ const send = (msg) => ws.send(JSON.stringify(msg));
 const log = (data) => ws.readyState === 1 && send({ type: 'log', ...data });
 ws.onopen = async () => {
   log({ ev: 'join', ua: navigator.userAgent, app: window.huddle?.version ?? null });
+  log({ ev: 'codecs', caps, chosen: codec, settings: { quality: settings.quality, codec: settings.codec, lowLatency: settings.lowLatency } });
   for (const m of (await window.huddle?.appLogs?.()) ?? []) log({ ev: 'app', ...m });
 };
 window.huddle?.onAppLog?.((m) => log({ ev: 'app', ...m }));
@@ -86,6 +94,7 @@ async function onSignal({ description, candidate }) {
 function start() {
   pc = new RTCPeerConnection({ iceServers });
   for (const t of local.getTracks()) pc.addTrack(t, local);
+  preferCodec(pc, codec); // before the first offer goes out
   if (screenStream) addScreen();
 
   dc = pc.createDataChannel('data', { negotiated: true, id: 0 });
@@ -96,19 +105,10 @@ function start() {
     if (screenStream) sendData({ t: 'screen', id: screenStream.id });
   };
 
-  pc.onnegotiationneeded = async () => {
-    try {
-      makingOffer = true;
-      await pc.setLocalDescription();
-      send({ description: pc.localDescription });
-    } catch (e) {
-      console.error(e);
-    } finally {
-      makingOffer = false;
-    }
-  };
+  pc.onnegotiationneeded = negotiate;
   pc.onicecandidate = ({ candidate }) => candidate && send({ candidate });
-  pc.ontrack = ({ streams: [stream] }) => {
+  pc.ontrack = ({ receiver, streams: [stream] }) => {
+    setLatency(receiver);
     remoteStreams.set(stream.id, stream);
     stream.onremovetrack = () => {
       if (!stream.getTracks().length) remoteStreams.delete(stream.id);
@@ -122,6 +122,24 @@ function start() {
     if (s === 'failed') pc.restartIce();
     status({ connecting: 'Соединение…', connected: 'На связи', disconnected: 'Связь прерывается…', failed: 'Переподключение…' }[s] ?? $('status').textContent);
   };
+}
+
+async function negotiate() {
+  try {
+    makingOffer = true;
+    await pc.setLocalDescription();
+    send({ description: pc.localDescription });
+  } catch (e) {
+    console.error(e);
+  } finally {
+    makingOffer = false;
+  }
+}
+
+// Video only: a near-empty jitter buffer cuts ~50-200 ms; audio keeps its default to avoid crackle.
+function setLatency(receiver) {
+  if (receiver.track.kind !== 'video' || !('jitterBufferTarget' in receiver)) return;
+  try { receiver.jitterBufferTarget = settings.lowLatency ? 0 : null; } catch {}
 }
 
 function stop() {
@@ -225,18 +243,70 @@ $('chat-close').onclick = toggleChat;
 function addScreen() {
   sendData({ t: 'screen', id: screenStream.id });
   screenSenders = screenStream.getTracks().map((t) => pc.addTrack(t, screenStream));
-  for (const s of screenSenders) limitScreen(s);
+  preferCodec(pc, codec);
+  applyScreen(screenVideo(), screenPreset());
 }
 
-// Retina / 4K screens at full size choke the encoder (seconds of lag). Send at most ~1080p.
-async function limitScreen(sender) {
-  const { width = 0, height = 0 } = sender.track.getSettings();
-  const scale = Math.max(1, width / 1920, height / 1080);
-  const params = sender.getParameters();
-  if (!params.encodings?.length) params.encodings = [{}];
-  params.encodings[0].scaleResolutionDownBy = scale;
-  params.encodings[0].maxBitrate = 2_500_000;
-  try { await sender.setParameters(params); } catch (e) { console.warn('setParameters', e); }
+// --- screen quality: preset or auto ladder (quality.js) ---
+const screenVideo = () => screenSenders.find((s) => s.track?.kind === 'video');
+const screenPreset = () => (settings.quality === 'auto' ? { ...autoStep, hint: 'text' } : PRESETS[settings.quality]);
+watchScreen({
+  getSender: () => (settings.quality === 'auto' ? screenVideo() : null),
+  getCodec: () => codec,
+  onStep: (step, why) => {
+    autoStep = step;
+    applyScreen(screenVideo(), screenPreset());
+    log({ ev: 'quality', ...step, ...why });
+  },
+  onCodecTooHeavy: () => {
+    const from = codec;
+    codec = caps.H264 ? 'H264' : 'VP8';
+    preferCodec(pc, codec);
+    if (pc) negotiate();
+    log({ ev: 'codec-fallback', from, to: codec });
+  },
+});
+
+initSettings({
+  settings,
+  caps,
+  autoCodec: autoCodec(caps),
+  describe: () => `Сейчас: кодек ${codec ?? '—'}` + (screenStream ? `, демонстрация до ${screenPreset().w}px, ${screenPreset().fps} к/с` : ''),
+  onChange: (key, value) => {
+    log({ ev: 'setting', key, value });
+    if (key === 'cam' || key === 'mic') return switchDevice(key === 'cam' ? 'video' : 'audio', value);
+    if (key === 'quality') return screenStream && applyScreen(screenVideo(), screenPreset());
+    if (key === 'lowLatency') return pc?.getReceivers().forEach(setLatency);
+    if (key === 'codec') {
+      codec = value === 'auto' ? autoCodec(caps) : value;
+      preferCodec(pc, codec);
+      if (pc) negotiate();
+    }
+  },
+});
+
+// Swap camera / microphone mid-call without renegotiating (replaceTrack).
+async function switchDevice(kind, deviceId) {
+  let track;
+  try {
+    [track] = (await navigator.mediaDevices.getUserMedia({ [kind]: { deviceId: { exact: deviceId } } })).getTracks();
+  } catch (e) {
+    return toast(`Не удалось включить устройство: ${e.message}`);
+  }
+  const old = kind === 'video' ? local.getVideoTracks()[0] : local.getAudioTracks()[0];
+  const sender = old && pc?.getSenders().find((s) => s.track === old);
+  if (old) {
+    track.enabled = old.enabled;
+    local.removeTrack(old);
+    old.stop();
+  }
+  local.addTrack(track);
+  if (sender) await sender.replaceTrack(track);
+  else if (pc) pc.addTrack(track, local);
+  $(kind === 'video' ? 'cam' : 'mic').disabled = false;
+  $(kind === 'video' ? 'cam' : 'mic').classList.toggle('off', !track.enabled);
+  $('local').srcObject = local;
+  render();
 }
 
 function stopShare() {
@@ -256,7 +326,7 @@ function stopShare() {
 async function toggleShare() {
   if (screenStream) return stopShare();
   try {
-    screenStream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 15 } });
+    screenStream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: screenPreset().fps } });
   } catch (e) {
     // In a browser NotAllowedError is usually just "cancelled the picker"; in the app it's a real failure.
     log({ ev: 'share-error', name: e.name, msg: e.message });
@@ -267,7 +337,7 @@ async function toggleShare() {
   track.contentHint = 'detail'; // keep text sharp rather than smooth motion
   log({ ev: 'share', on: true, ...track.getSettings() });
   // Ask the capturer itself for less, where supported (Safari rejects size limits in getDisplayMedia).
-  await track.applyConstraints({ width: { max: 1920 }, height: { max: 1080 }, frameRate: { max: 15 } }).catch(() => {});
+  await track.applyConstraints({ width: { max: 1920 }, height: { max: 1080 }, frameRate: { max: screenPreset().fps } }).catch(() => {}); // one call: each one restarts the capturer
   track.onended = stopShare;    // browser's own "Stop sharing" button
   if (pc) addScreen();
   reportMic();
@@ -279,14 +349,14 @@ $('share').onclick = toggleShare;
 $('stop-share').onclick = stopShare;
 
 // --- mic / camera ---
-function toggle(button, tracks, labels) {
+function toggle(button, getTracks, labels) {
   const label = button.querySelector('span');
-  if (!tracks.length) {
-    button.disabled = true;
+  if (!getTracks().length) {
+    button.disabled = true; // a device chosen in settings re-enables it
     button.classList.add('off');
-    return;
   }
   button.onclick = () => {
+    const tracks = getTracks();
     const enabled = !tracks[0].enabled;
     tracks.forEach((t) => (t.enabled = enabled));
     button.classList.toggle('off', !enabled);
@@ -296,8 +366,8 @@ function toggle(button, tracks, labels) {
     render();
   };
 }
-toggle($('mic'), local.getAudioTracks(), ['Выкл. звук', 'Вкл. звук']);
-toggle($('cam'), local.getVideoTracks(), ['Остановить видео', 'Включить видео']);
+toggle($('mic'), () => local.getAudioTracks(), ['Выкл. звук', 'Вкл. звук']);
+toggle($('cam'), () => local.getVideoTracks(), ['Остановить видео', 'Включить видео']);
 
 // --- view: speaker / gallery, self view, fullscreen, leave ---
 $('view').onclick = () => {
