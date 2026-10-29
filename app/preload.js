@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('huddle', {
   stopControl: () => ipcRenderer.send('control-stop'),
   input: (msg) => ipcRenderer.send('input', msg),
   onControlOff: on('control-off'),
+  appLogs: () => ipcRenderer.invoke('app-logs'),
+  onAppLog: on('app-log'),
   barState: (s) => ipcRenderer.send('bar-state', s),
   onBarAction: on('bar-action'),
   onInkOut: on('ink-out'),

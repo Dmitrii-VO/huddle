@@ -61,10 +61,27 @@ new WebSocketServer({ server, maxPayload: 64 * 1024 }).on('connection', (ws, req
   ws.send(JSON.stringify({ type: 'joined', peer: !!peer }));
   peer?.send(JSON.stringify({ type: 'peer-joined' }));
 
+  // Diagnostics go to the journal (journalctl -u huddle), tagged "room/peer", never to the other side.
+  const tag = `${code.slice(0, 6)}/${crypto.randomBytes(2).toString('hex')}`;
+  let budget = 30; // lines per minute: enough for stats every 10 s plus events, not enough to flood the disk
+  const refill = setInterval(() => (budget = 30), 60_000);
+  console.log(tag, 'connected', room.size === 2 ? '(second)' : '(first)');
+
   ws.on('message', (data) => {
-    for (const other of room) if (other !== ws) other.send(data.toString());
+    const text = data.toString();
+    if (text.startsWith('{"type":"log"')) {
+      if (budget-- <= 0 || text.length > 4000) return;
+      try {
+        const { type, ...entry } = JSON.parse(text);
+        console.log(tag, JSON.stringify(entry)); // re-serialized: one line, no injected newlines
+      } catch {}
+      return;
+    }
+    for (const other of room) if (other !== ws) other.send(text);
   });
   ws.on('close', () => {
+    clearInterval(refill);
+    console.log(tag, 'disconnected');
     room.delete(ws);
     if (room.size === 0) rooms.delete(code);
     for (const other of room) other.send(JSON.stringify({ type: 'peer-left' }));

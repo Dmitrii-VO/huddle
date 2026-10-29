@@ -14,8 +14,8 @@ const newer = (a, b) => {
   return false;
 };
 
-module.exports = function initUpdates({ getWin, isBusy, site }) {
-  if (!app.isPackaged) return;
+module.exports = function initUpdates({ getWin, isBusy, site, log }) {
+  if (!app.isPackaged) return log({ update: 'skipped (dev build)' });
   let offered = null; // version already offered this session: ask once, not every 6 hours
 
   // Never pop a dialog in the middle of a demonstration; try again in a minute.
@@ -24,7 +24,11 @@ module.exports = function initUpdates({ getWin, isBusy, site }) {
   if (process.platform === 'win32') {
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.on('checking-for-update', () => log({ update: 'checking' }));
+    autoUpdater.on('update-not-available', () => log({ update: 'up to date' }));
+    autoUpdater.on('update-available', ({ version }) => log({ update: 'downloading', version }));
     autoUpdater.on('update-downloaded', ({ version }) => {
+      log({ update: 'downloaded', version });
       if (offered === version) return;
       offered = version;
       whenFree(async () => {
@@ -36,10 +40,11 @@ module.exports = function initUpdates({ getWin, isBusy, site }) {
           defaultId: 0,
           cancelId: 1,
         });
+        log({ update: response === 0 ? 'restart now' : 'later' });
         if (response === 0) autoUpdater.quitAndInstall();
       });
     });
-    autoUpdater.on('error', (e) => console.warn('update', e.message));
+    autoUpdater.on('error', (e) => log({ update: 'error', msg: e.message }));
     const check = () => autoUpdater.checkForUpdates().catch(() => {});
     check();
     setInterval(check, EVERY);
@@ -50,6 +55,7 @@ module.exports = function initUpdates({ getWin, isBusy, site }) {
     try {
       const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`);
       const latest = (await res.json()).tag_name?.replace(/^v/, '');
+      log({ update: 'checked', latest });
       if (!latest || !newer(latest, app.getVersion()) || offered === latest) return;
       offered = latest;
       whenFree(async () => {
@@ -61,9 +67,12 @@ module.exports = function initUpdates({ getWin, isBusy, site }) {
           defaultId: 0,
           cancelId: 1,
         });
+        log({ update: response === 0 ? 'download' : 'later', version: latest });
         if (response === 0) shell.openExternal(`${site}/download`);
       });
-    } catch {} // offline: try next time
+    } catch (e) {
+      log({ update: 'error', msg: e.message }); // offline: try next time
+    }
   };
   check();
   setInterval(check, EVERY);

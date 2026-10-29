@@ -1,5 +1,6 @@
 import { isInk } from '/ink.js';
 import { createTools } from '/tools.js';
+import { startDiag } from '/diag.js';
 
 const $ = (id) => document.getElementById(id);
 const room = location.pathname.split('/')[2];
@@ -37,6 +38,15 @@ async function getMedia() {
 // --- signaling ---
 const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/?room=${room}`);
 const send = (msg) => ws.send(JSON.stringify(msg));
+// One line per event in the server journal; never lesson content.
+const log = (data) => ws.readyState === 1 && send({ type: 'log', ...data });
+ws.onopen = async () => {
+  log({ ev: 'join', ua: navigator.userAgent, app: window.huddle?.version ?? null });
+  for (const m of (await window.huddle?.appLogs?.()) ?? []) log({ ev: 'app', ...m });
+};
+window.huddle?.onAppLog?.((m) => log({ ev: 'app', ...m }));
+addEventListener('error', (e) => log({ ev: 'error', msg: String(e.message), at: `${e.filename}:${e.lineno}` }));
+addEventListener('unhandledrejection', (e) => log({ ev: 'error', msg: String(e.reason?.message ?? e.reason) }));
 
 ws.onmessage = ({ data }) => {
   const msg = JSON.parse(data);
@@ -108,6 +118,7 @@ function start() {
   };
   pc.onconnectionstatechange = () => {
     const s = pc.connectionState;
+    log({ ev: 'conn', state: s });
     if (s === 'failed') pc.restartIce();
     status({ connecting: 'Соединение…', connected: 'На связи', disconnected: 'Связь прерывается…', failed: 'Переподключение…' }[s] ?? $('status').textContent);
   };
@@ -160,6 +171,7 @@ function onData(msg) {
   // Marks: over my real screen if I'm the one sharing (desktop app only), else over the picture I'm watching.
   if (isInk(msg)) return screenStream ? window.huddle?.ink(msg) : ink.apply(msg);
   if (msg.t === 'mouse') return window.huddle?.input(msg);
+  if (msg.t.startsWith('control')) log({ ev: 'control', got: msg });
   if (msg.t === 'control-request') return answerControl();
   if (msg.t === 'control-stop') return releaseControl(false);
   if (msg.t === 'control') return onControl(msg);
@@ -233,6 +245,7 @@ function stopShare() {
   screenSenders = [];
   screenStream = null;
   sendData({ t: 'screen', id: null });
+  log({ ev: 'share', on: false });
   window.huddle?.shareEnded();
   $('release').hidden = true;
   $('share').classList.remove('on');
@@ -246,11 +259,13 @@ async function toggleShare() {
     screenStream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 15 } });
   } catch (e) {
     // In a browser NotAllowedError is usually just "cancelled the picker"; in the app it's a real failure.
+    log({ ev: 'share-error', name: e.name, msg: e.message });
     if (window.huddle || e.name !== 'NotAllowedError') alert(`Не удалось показать экран: ${e.message}`);
     return;
   }
   const track = screenStream.getVideoTracks()[0];
   track.contentHint = 'detail'; // keep text sharp rather than smooth motion
+  log({ ev: 'share', on: true, ...track.getSettings() });
   // Ask the capturer itself for less, where supported (Safari rejects size limits in getDisplayMedia).
   await track.applyConstraints({ width: { max: 1920 }, height: { max: 1080 }, frameRate: { max: 15 } }).catch(() => {});
   track.onended = stopShare;    // browser's own "Stop sharing" button
@@ -323,26 +338,8 @@ $('leave').onclick = () => {
   document.body.innerHTML = '<div class="left-screen"><h2>Вы вышли из урока</h2><button onclick="location.reload()">Вернуться</button></div>';
 };
 
-// --- connection quality (like Zoom's statistics): path, round trip, incoming fps ---
-let netInfo = '';
-setInterval(async () => {
-  if (pc?.connectionState !== 'connected') return ($('net').hidden = true);
-  const stats = await pc.getStats();
-  let pair = null, fps = 0;
-  stats.forEach((r) => {
-    if (r.type === 'transport' && r.selectedCandidatePairId) pair = stats.get(r.selectedCandidatePairId);
-    if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded') pair ??= r;
-    if (r.type === 'inbound-rtp' && r.kind === 'video') fps = Math.max(fps, r.framesPerSecond ?? 0);
-  });
-  if (!pair) return;
-  const rtt = Math.round((pair.currentRoundTripTime ?? 0) * 1000);
-  const relay = stats.get(pair.localCandidateId)?.candidateType === 'relay' || stats.get(pair.remoteCandidateId)?.candidateType === 'relay';
-  $('net').hidden = false;
-  $('net').className = `tb ${rtt < 150 ? 'good' : rtt < 300 ? 'fair' : 'poor'}`;
-  $('net').querySelector('span').textContent = `${rtt} мс`;
-  netInfo = `${relay ? 'Через сервер' : 'Напрямую'} · задержка сети ${rtt} мс · входящее видео ${Math.round(fps)} к/с`;
-}, 2000);
-$('net').onclick = () => toast(netInfo);
+// --- diagnostics: 'Связь' indicator + stats/events in the server log (diag.js) ---
+startDiag({ getPc: () => pc, log, toast });
 
 // Desktop app too old for this page (missing bridge features): ask to update.
 const MIN_APP = '0.2.0';

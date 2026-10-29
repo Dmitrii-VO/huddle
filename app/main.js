@@ -3,6 +3,7 @@
 // and letting the other side drive mouse and keyboard after the user agrees.
 const { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, screen, session, shell, systemPreferences } = require('electron');
 const path = require('node:path');
+const os = require('node:os');
 const initUpdates = require('./updater');
 
 const SITE = process.env.HUDDLE_URL || 'https://huddle.runterra.ru';
@@ -20,6 +21,15 @@ let input = null;         // native module, loaded on first use
 const held = new Set();   // synthetic mouse buttons currently down
 const heldKeys = new Set();
 const shareState = { tool: null, color: 0, mic: true }; // my own annotation tool while I share
+
+// App events for the server journal: buffered until the page joins a lesson (it has the socket).
+const appLogs = [];
+function appLog(m) {
+  const entry = { at: new Date().toISOString(), ...m };
+  appLogs.push(entry);
+  if (appLogs.length > 50) appLogs.shift();
+  win?.webContents.send('app-log', entry);
+}
 
 function createWindow() {
   win = new BrowserWindow({ width: 1200, height: 800, title: 'Huddle', autoHideMenuBar: true, webPreferences: { preload } });
@@ -216,7 +226,9 @@ app.whenReady().then(() => {
 
   ipcMain.on('version', (e) => (e.returnValue = app.getVersion()));
   createWindow();
-  initUpdates({ getWin: () => win, isBusy: () => !!sharedDisplay || control, site: SITE });
+  ipcMain.handle('app-logs', (e) => (fromWin(e) ? appLogs : []));
+  appLog({ start: app.getVersion(), os: `${process.platform} ${os.release()} ${process.arch}`, packaged: app.isPackaged });
+  initUpdates({ getWin: () => win, isBusy: () => !!sharedDisplay || control, site: SITE, log: appLog });
 });
 
 app.on('will-quit', () => globalShortcut.unregisterAll());
