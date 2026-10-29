@@ -3,7 +3,9 @@
 const { BrowserWindow, ipcMain } = require('electron');
 const path = require('node:path');
 
-function ask({ parent, title, detail = '', buttons, kind = 'info', onTop = false }) {
+// safe: for consent questions — focus starts on cancel, the window doesn't steal focus from what the
+// user is typing into, and clicks/keys in the first moments are ignored (no accidental "Allow").
+function ask({ parent, title, detail = '', buttons, kind = 'info', onTop = false, safe = false }) {
   return new Promise((resolve) => {
     const cancel = buttons.length - 1;
     const w = new BrowserWindow({
@@ -28,13 +30,14 @@ function ask({ parent, title, detail = '', buttons, kind = 'info', onTop = false
       if (e.sender !== w.webContents) return;
       w.setContentSize(480, Math.min(600, Math.ceil(h)));
       w.center();
+      if (safe) return w.showInactive();
       w.show();
       w.focus();
     };
     ipcMain.on('prompt-answer', onAnswer);
     ipcMain.on('prompt-size', onSize);
     w.on('closed', () => finish(cancel));
-    w.loadFile(path.join(__dirname, 'prompt.html'), { query: { data: JSON.stringify({ title, detail, buttons, kind }) } });
+    w.loadFile(path.join(__dirname, 'prompt.html'), { query: { data: JSON.stringify({ title, detail, buttons, kind, safe }) } });
   });
 }
 

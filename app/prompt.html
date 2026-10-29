@@ -26,7 +26,7 @@
     <div class="buttons" id="buttons"></div>
   </div>
   <script>
-    const { title, detail, buttons, kind } = JSON.parse(new URLSearchParams(location.search).get('data'));
+    const { title, detail, buttons, kind, safe } = JSON.parse(new URLSearchParams(location.search).get('data'));
     document.getElementById('box').className = 'box ' + kind;
     document.getElementById('icon').textContent = { info: 'i', warn: '!', ask: '?' }[kind] ?? 'i';
     document.getElementById('title').textContent = title;
@@ -37,13 +37,17 @@
       const b = document.createElement('button');
       b.textContent = label;
       if (i === 0) b.className = 'primary';
-      b.onclick = () => window.huddle.promptAnswer(i);
+      b.onclick = () => armed && window.huddle.promptAnswer(i);
       document.getElementById('buttons').append(b);
     });
+    // A consent prompt ignores input for a moment: a keypress or click meant for the slides must not answer it.
+    let armed = !safe;
+    if (safe) setTimeout(() => (armed = true), 800);
     addEventListener('keydown', (e) => {
       if (e.key === 'Escape') window.huddle.promptAnswer(cancel);
+      if (!armed && (e.key === 'Enter' || e.key === ' ')) e.preventDefault();
     });
-    document.querySelector('.primary').focus();
+    [...document.querySelectorAll('button')][safe ? 0 : buttons.length - 1].focus(); // buttons are reversed: [0] is cancel
     window.huddle.promptSize(document.getElementById('box').getBoundingClientRect().height);
   </script>
 </body>

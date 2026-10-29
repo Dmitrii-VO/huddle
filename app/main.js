@@ -129,6 +129,14 @@ function toScreen(x, y) {
   return isMac ? p : screen.dipToScreenPoint(p); // Windows SetCursorPos takes physical pixels
 }
 
+// One consent question at a time; after "Отклонить" repeats are refused for a while (no prompt spam).
+let pendingControl = null, deniedUntil = 0;
+function requestControl() {
+  if (Date.now() < deniedUntil) return Promise.resolve(false);
+  pendingControl ??= askControl().finally(() => (pendingControl = null));
+  return pendingControl;
+}
+
 async function askControl() {
   if (!sharedDisplay) return false;
   const gen = consentGen;
@@ -145,11 +153,12 @@ async function askControl() {
   const response = process.env.HUDDLE_TEST_ALLOW_CONTROL
     ? 0
     : await ask({
-        parent: win, onTop: true, kind: 'ask',
+        parent: win, onTop: true, kind: 'ask', safe: true,
         title: 'Собеседник просит управление компьютером',
         detail: `Он сможет двигать мышь, нажимать и печатать. Отключить можно в любой момент: ${STOP_LABEL}, кнопка в окне Huddle или остановка демонстрации.`,
         buttons: ['Разрешить', 'Отклонить'],
       });
+  if (response !== 0) deniedUntil = Date.now() + 15_000;
   setControl(response === 0 && !!sharedDisplay && gen === consentGen);
   return control;
 }
@@ -228,7 +237,7 @@ app.whenReady().then(() => {
       setShareTool(shareState.tool);
     }
   });
-  ipcMain.handle('control-request', (e) => (fromWin(e) ? askControl() : false));
+  ipcMain.handle('control-request', (e) => (fromWin(e) ? requestControl() : false));
   ipcMain.on('control-stop', (e) => fromWin(e) && setControl(false));
   ipcMain.on('input', (e, m) => fromWin(e) && applyInput(m));
 
