@@ -1,5 +1,7 @@
 name: Student app
 on: workflow_dispatch
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -23,9 +25,8 @@ jobs:
       - run: ${{ matrix.cmd }} --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false # unsigned build
-      - uses: actions/upload-artifact@v4
-        with:
-          name: huddle-${{ matrix.os }}
-          path: |
-            app/dist/*.dmg
-            app/dist/*.exe
+      # Releases, not artifacts: the account's artifact storage quota is shared and full.
+      - run: shopt -s nullglob; gh release upload app-latest dist/*.dmg dist/*.exe --clobber
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
