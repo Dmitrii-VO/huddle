@@ -221,8 +221,10 @@ $('share').onclick = async () => {
   if (screenStream) return stopShare();
   try {
     screenStream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 15 } });
-  } catch {
-    return; // user cancelled the picker
+  } catch (e) {
+    // In a browser NotAllowedError is usually just "cancelled the picker"; in the app it's a real failure.
+    if (window.huddle || e.name !== 'NotAllowedError') alert(`Не удалось показать экран: ${e.message}`);
+    return;
   }
   const track = screenStream.getVideoTracks()[0];
   track.contentHint = 'detail'; // keep text sharp rather than smooth motion

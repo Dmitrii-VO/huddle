@@ -1,6 +1,6 @@
 // Student desktop app: the website in a window, plus what a browser can't do —
 // a click-through overlay over the shared screen for the teacher's pointer and pen.
-const { app, BrowserWindow, desktopCapturer, ipcMain, screen, session } = require('electron');
+const { app, BrowserWindow, desktopCapturer, dialog, ipcMain, screen, session, shell, systemPreferences } = require('electron');
 const path = require('node:path');
 
 const SITE = process.env.HUDDLE_URL || 'https://176-108-255-4.sslip.io';
@@ -43,7 +43,17 @@ app.whenReady().then(() => {
   // "Показать экран" shares the whole primary screen — the overlay must match what the teacher sees.
   session.defaultSession.setDisplayMediaRequestHandler(async (_req, cb) => {
     const display = screen.getPrimaryDisplay();
-    const sources = await desktopCapturer.getSources({ types: ['screen'] });
+    const sources = await desktopCapturer.getSources({ types: ['screen'] }); // on macOS this also adds the app to the Screen Recording list
+    if (process.platform === 'darwin' && systemPreferences.getMediaAccessStatus('screen') !== 'granted') {
+      const { response } = await dialog.showMessageBox(win, {
+        type: 'warning',
+        message: 'Разрешите Huddle запись экрана',
+        detail: 'Системные настройки → Конфиденциальность и безопасность → Запись экрана: включите Huddle, затем закройте и снова откройте приложение.',
+        buttons: ['Открыть настройки', 'Отмена'],
+      });
+      if (response === 0) shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
+      return cb({});
+    }
     const source = sources.find((s) => s.display_id === String(display.id)) ?? sources[0];
     if (!source) return cb({});
     showOverlay(display);
