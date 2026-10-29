@@ -1,21 +1,24 @@
-// Student desktop app: the website in a window, plus what a browser can't do —
-// a click-through overlay over the shared screen for the teacher's pointer and pen,
-// and letting the teacher drive the mouse after the student agrees.
+// Huddle desktop app: the website in a window, plus what a browser can't do while sharing the screen —
+// a click-through overlay for annotations, a floating control bar over full-screen slides,
+// and letting the other side drive mouse and keyboard after the user agrees.
 const { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, screen, session, shell, systemPreferences } = require('electron');
 const path = require('node:path');
 
-const SITE = process.env.HUDDLE_URL || 'https://176-108-255-4.sslip.io';
+const SITE = process.env.HUDDLE_URL || 'https://huddle.runterra.ru';
 const preload = path.join(__dirname, 'preload.js');
 const STOP_KEY = 'CommandOrControl+Alt+X';
 const STOP_LABEL = process.platform === 'darwin' ? '⌘⌥X' : 'Ctrl+Alt+X';
 const isMac = process.platform === 'darwin';
+const KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', 'Delete', 'Enter', 'Backspace', 'Tab', 'Escape', ' ']);
 
-let win = null, overlay = null;
+let win = null, overlay = null, bar = null;
 let sharedDisplay = null; // set while the screen is shared
 let control = false;      // consent lives here, never in the (remote) page
 let consentGen = 0;       // bumped on navigation / share end: a pending "Разрешить" must not outlive them
 let input = null;         // native module, loaded on first use
-const held = new Set();   // synthetic buttons currently down
+const held = new Set();   // synthetic mouse buttons currently down
+const heldKeys = new Set();
+const shareState = { tool: null, color: 0, mic: true }; // my own annotation tool while I share
 
 function createWindow() {
   win = new BrowserWindow({ width: 1200, height: 800, title: 'Huddle', autoHideMenuBar: true, webPreferences: { preload } });
@@ -26,41 +29,76 @@ function createWindow() {
   });
   win.webContents.on('did-navigate', () => { consentGen++; setControl(false); });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  win.on('closed', () => { overlay?.destroy(); app.quit(); });
+  win.on('closed', () => { overlay?.destroy(); bar?.destroy(); app.quit(); });
 }
 
-// ponytail: always the primary display; add a picker when a student has two monitors.
+// Windows shown over everything on the shared display, kept out of the captured picture.
+function floating(opts) {
+  const w = new BrowserWindow({ frame: false, transparent: true, skipTaskbar: true, hasShadow: false, resizable: false, ...opts, webPreferences: { preload } });
+  w.setAlwaysOnTop(true, 'screen-saver');
+  w.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  w.setContentProtection(true);
+  return w;
+}
+
+// ponytail: always the primary display; add a picker when someone shares with two monitors.
 function showOverlay(display) {
   overlay?.destroy();
-  overlay = new BrowserWindow({
-    ...display.bounds,
-    transparent: true, frame: false, focusable: false, skipTaskbar: true,
-    hasShadow: false, resizable: false, movable: false,
-    webPreferences: { preload },
-  });
+  overlay = floating({ ...display.bounds, focusable: false, movable: false });
   overlay.setBounds(display.bounds); // Windows trims the initial size to the work area (above the taskbar)
   overlay.setIgnoreMouseEvents(true);
-  overlay.setAlwaysOnTop(true, 'screen-saver');
-  overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  overlay.setContentProtection(true); // keep the marks out of the captured stream: the teacher already draws them locally
   overlay.loadURL(SITE + '/overlay.html');
   overlay.on('closed', () => (overlay = null));
+}
+
+// Zoom-like control bar at the top of the shared screen: mic, pen, pointer, stop.
+function showBar(display) {
+  bar?.destroy();
+  const wa = display.workArea, width = Math.min(880, wa.width - 16), height = 56;
+  bar = floating({ x: Math.round(wa.x + (wa.width - width) / 2), y: wa.y + 6, width, height, focusable: false });
+  bar.setAlwaysOnTop(true, 'screen-saver', 1); // above the overlay
+  bar.loadFile(path.join(__dirname, 'bar.html'));
+  bar.webContents.on('did-finish-load', pushBar);
+  bar.on('closed', () => (bar = null));
+}
+
+function pushBar() {
+  bar?.webContents.send('state', shareState);
+  overlay?.webContents.send('tool', shareState);
+}
+
+function setShareTool(tool) {
+  shareState.tool = tool;
+  overlay?.setIgnoreMouseEvents(!tool); // drawing needs the clicks; otherwise everything passes through
+  pushBar();
+}
+
+function endShare() {
+  consentGen++;
+  setControl(false);
+  sharedDisplay = null;
+  shareState.tool = null;
+  overlay?.destroy();
+  bar?.destroy();
 }
 
 function setControl(on) {
   if (control === on) return;
   control = on;
   if (on) {
+    setShareTool(null); // remote clicks must reach the apps, not my drawing layer
     globalShortcut.register(STOP_KEY, () => {
       setControl(false);
       win?.webContents.send('control-off');
     });
   } else {
     globalShortcut.unregister(STOP_KEY);
-    for (const b of held) input.button(b, false); // don't leave a drag hanging
+    for (const b of held) input.button(b, false); // don't leave a drag or a key hanging
+    for (const k of heldKeys) input.key(k, false);
     held.clear();
+    heldKeys.clear();
   }
-  overlay?.webContents.send('banner', on ? `Мышью управляет преподаватель · ${STOP_LABEL} — отключить` : '');
+  overlay?.webContents.send('banner', on ? `Компьютером управляет собеседник · ${STOP_LABEL} — отключить` : '');
 }
 
 // Normalized (0..1) point on the shared display -> what the OS input API expects.
@@ -85,8 +123,8 @@ async function askControl() {
     ? { response: 0 }
     : await dialog.showMessageBox(win, {
         type: 'question',
-        message: 'Преподаватель просит управление мышью',
-        detail: `Отключить можно в любой момент: ${STOP_LABEL}, кнопка в окне Huddle или остановка показа экрана.`,
+        message: 'Собеседник просит управление компьютером',
+        detail: `Он сможет двигать мышь, нажимать и печатать. Отключить можно в любой момент: ${STOP_LABEL}, кнопка в окне Huddle или остановка демонстрации.`,
         buttons: ['Разрешить', 'Отклонить'],
         defaultId: 1,
         cancelId: 1,
@@ -98,8 +136,15 @@ async function askControl() {
 const unit = (v) => typeof v === 'number' && v >= 0 && v <= 1;
 
 function applyInput(m) {
-  if (!control || !sharedDisplay || !m || !unit(m.x) || !unit(m.y)) return;
+  if (!control || !sharedDisplay || !m) return;
   input ??= require('./input');
+  if ((m.a === 'key' || m.a === 'keyup') && KEYS.has(m.k)) {
+    input.key(m.k, m.a === 'key');
+    m.a === 'key' ? heldKeys.add(m.k) : heldKeys.delete(m.k);
+    return;
+  }
+  if (m.a === 'type' && typeof m.s === 'string' && [...m.s].length === 1) return input.type(m.s);
+  if (!unit(m.x) || !unit(m.y)) return;
   const p = toScreen(m.x, m.y);
   input.move(p.x, p.y);
   if ((m.a === 'down' || m.a === 'up') && (m.b === 'left' || m.b === 'right')) {
@@ -113,7 +158,7 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => {
     cb(wc.getURL().startsWith(SITE + '/') && ['media', 'display-capture', 'clipboard-sanitized-write'].includes(permission));
   });
-  // "Показать экран" shares the whole primary screen — the overlay must match what the teacher sees.
+  // "Демонстрация" shares the whole primary screen — overlay and bar must match what the other side sees.
   session.defaultSession.setDisplayMediaRequestHandler(async (_req, cb) => {
     const display = screen.getPrimaryDisplay();
     const sources = await desktopCapturer.getSources({ types: ['screen'] }); // on macOS this also adds the app to the Screen Recording list
@@ -131,17 +176,35 @@ app.whenReady().then(() => {
     if (!source) return cb({});
     sharedDisplay = display;
     showOverlay(display);
+    showBar(display);
     cb({ video: source });
   });
 
   const fromWin = (e) => e.sender === win?.webContents;
+  const fromOverlay = (e) => e.sender === overlay?.webContents;
+  const fromBar = (e) => e.sender === bar?.webContents;
+
+  // the page -> overlay: the other side's marks on my screen
   ipcMain.on('ink', (e, msg) => fromWin(e) && overlay?.webContents.send('ink', msg));
-  ipcMain.on('share-ended', (e) => {
+  // overlay -> the page -> the other side: my own marks
+  ipcMain.on('ink-out', (e, msg) => fromOverlay(e) && win?.webContents.send('ink-out', msg));
+  ipcMain.on('share-ended', (e) => fromWin(e) && endShare());
+  ipcMain.on('bar-state', (e, s) => {
     if (!fromWin(e)) return;
-    consentGen++;
-    setControl(false);
-    sharedDisplay = null;
-    overlay?.destroy();
+    shareState.mic = !!s?.mic;
+    pushBar();
+  });
+  ipcMain.on('bar', (e, action) => {
+    if (!fromBar(e)) return;
+    if (action === 'mic' || action === 'stop') return win?.webContents.send('bar-action', action);
+    if (['pen', 'pointer', 'eraser'].includes(action)) return setShareTool(shareState.tool === action ? null : action);
+    if (action === 'undo' || action === 'clear') return overlay?.webContents.send('cmd', action);
+    const color = /^color:(\d)$/.exec(action)?.[1];
+    if (color) {
+      shareState.color = +color;
+      if (!shareState.tool) shareState.tool = 'pen';
+      setShareTool(shareState.tool);
+    }
   });
   ipcMain.handle('control-request', (e) => (fromWin(e) ? askControl() : false));
   ipcMain.on('control-stop', (e) => fromWin(e) && setControl(false));

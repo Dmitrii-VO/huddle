@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <style>
+    html, body { margin: 0; background: transparent; overflow: hidden; user-select: none; color: #eee; font: 13px system-ui, -apple-system, "Segoe UI", sans-serif; }
+    .bar { display: flex; align-items: center; gap: 2px; height: 46px; margin: 4px; padding: 0 8px; border-radius: 12px; background: rgba(28, 28, 28, 0.96); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5); -webkit-app-region: drag; }
+    .live { padding: 0 10px 0 4px; color: #34c759; font-weight: 600; white-space: nowrap; }
+    button { -webkit-app-region: no-drag; border: 0; background: none; color: inherit; font: inherit; padding: 7px 10px; border-radius: 8px; cursor: pointer; white-space: nowrap; }
+    button:hover { background: #3a3a3a; }
+    button.on { background: #0e71eb; color: #fff; }
+    #mic.off { color: #ff453a; }
+    #colors { display: flex; gap: 5px; padding: 0 6px; }
+    .sw { width: 18px; height: 18px; padding: 0; border-radius: 50%; border: 2px solid #555; }
+    .sw.on { outline: 2px solid #fff; outline-offset: 1px; }
+    .stop { margin-left: auto; background: #e02828; color: #fff; font-weight: 600; }
+    .stop:hover { background: #c41f1f; }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <span class="live">● Демонстрация</span>
+    <button data-a="mic" id="mic">Звук вкл.</button>
+    <button data-a="pen">Рисовать</button>
+    <button data-a="pointer">Указка</button>
+    <button data-a="eraser">Ластик</button>
+    <span id="colors"></span>
+    <button data-a="undo">Отменить</button>
+    <button data-a="clear">Очистить</button>
+    <button data-a="stop" class="stop">Остановить</button>
+  </div>
+  <script>
+    // Same palette (by index) as public/ink.js.
+    ['#ff2d55', '#ffcc00', '#34c759', '#0a84ff', '#ffffff', '#111111'].forEach((c, i) => {
+      const b = document.createElement('button');
+      b.className = 'sw';
+      b.style.background = c;
+      b.dataset.a = 'color:' + i;
+      document.getElementById('colors').append(b);
+    });
+    document.onclick = (e) => {
+      const a = e.target.closest('button')?.dataset.a;
+      if (a) window.huddle.bar(a);
+    };
+    window.huddle.onState((s) => {
+      for (const b of document.querySelectorAll('[data-a]')) {
+        b.classList.toggle('on', b.dataset.a === s.tool || b.dataset.a === 'color:' + s.color);
+      }
+      const mic = document.getElementById('mic');
+      mic.classList.toggle('off', !s.mic);
+      mic.textContent = s.mic ? 'Звук вкл.' : 'Звук выкл.';
+    });
+  </script>
+</body>
+</html>

@@ -4,7 +4,9 @@
   <meta charset="utf-8">
   <style>
     html, body { margin: 0; overflow: hidden; background: transparent; } canvas { display: block; }
-    #banner { position: fixed; top: 8px; left: 50%; transform: translateX(-50%); padding: 6px 14px; border-radius: 8px;
+    /* nearly invisible fill: transparent pixels would let clicks fall through to the apps below */
+    body.drawing { background: rgba(0, 0, 0, 0.01); cursor: crosshair; }
+    #banner { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); padding: 6px 14px; border-radius: 8px;
               background: rgba(180, 30, 50, 0.9); color: #fff; font: 14px system-ui, sans-serif; }
   </style>
 </head>
@@ -12,15 +14,45 @@
   <canvas id="ink"></canvas>
   <div id="banner" hidden></div>
   <script type="module">
-    // Transparent always-on-top window in the student app, fed over IPC.
+    // Transparent always-on-top window over the shared screen (desktop app only), fed over IPC:
+    // the other side's marks come in; my own marks (from the floating bar's tools) go out.
     import { createInk } from '/ink.js';
-    const ink = createInk(document.getElementById('ink'));
+    const canvas = document.getElementById('ink');
+    const ink = createInk(canvas);
     const fit = () => ink.resize(innerWidth, innerHeight);
     addEventListener('resize', fit);
     fit();
     window.huddle?.onInk(ink.apply);
     const banner = document.getElementById('banner');
     window.huddle?.onBanner((text) => { banner.textContent = text; banner.hidden = !text; });
+
+    let tool = null, color = 0, stroke = null;
+    const at = (e) => ({ x: e.clientX / innerWidth, y: e.clientY / innerHeight });
+    const out = (m) => { ink.apply(m); window.huddle.inkOut(m); };
+    const erase = (p) => { const id = ink.hit(p.x, p.y); if (id) out({ t: 'erase', id }); };
+    window.huddle?.onTool?.((s) => {
+      tool = s.tool;
+      color = s.color;
+      document.body.classList.toggle('drawing', !!tool);
+      if (tool !== 'pointer') ink.apply({ t: 'ptr', x: null });
+    });
+    window.huddle?.onCmd?.((c) => out({ t: c }));
+
+    canvas.onpointerdown = (e) => {
+      if (!tool) return;
+      canvas.setPointerCapture(e.pointerId);
+      if (tool === 'pen') {
+        stroke = Math.random().toString(36).slice(2);
+        out({ t: 'line', id: stroke, c: color, ...at(e) });
+      }
+      if (tool === 'eraser') erase(at(e));
+    };
+    canvas.onpointermove = (e) => {
+      if (tool === 'pointer') out({ t: 'ptr', ...at(e) });
+      if (tool === 'pen' && stroke) out({ t: 'line', id: stroke, c: color, ...at(e) });
+      if (tool === 'eraser' && e.buttons) erase(at(e));
+    };
+    canvas.onpointerup = () => (stroke = null);
   </script>
 </body>
 </html>

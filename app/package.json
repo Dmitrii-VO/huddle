@@ -16,6 +16,7 @@
       "main.js",
       "preload.js",
       "input.js",
+      "bar.html",
       "start.html"
     ],
     "mac": {

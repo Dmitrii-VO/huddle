@@ -11,7 +11,7 @@ Media goes peer-to-peer (WebRTC); the server only does signaling and TURN fallba
 
 ## Production
 
-Live at https://176-108-255-4.sslip.io on the `cloud` VPS, behind the existing nginx
+Live at https://huddle.runterra.ru (old https://176-108-255-4.sslip.io still served) on the `cloud` VPS, behind the existing nginx
 (`/etc/nginx/sites-enabled/huddle.conf`, certbot cert), app on 127.0.0.1:3020 (`huddle.service`),
 coturn on 3478. Update: `sh deploy/update.sh`.
 

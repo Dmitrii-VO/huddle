@@ -1,4 +1,5 @@
-import { COLORS, createInk, isInk } from '/ink.js';
+import { isInk } from '/ink.js';
+import { createTools } from '/tools.js';
 
 const $ = (id) => document.getElementById(id);
 const room = location.pathname.split('/')[2];
@@ -156,8 +157,8 @@ function onData(msg) {
   if (msg.t === 'screen') remoteScreenId = msg.id;
   if (msg.t === 'state') remoteState = { mic: !!msg.mic, cam: !!msg.cam };
   if (msg.t === 'chat') addMessage(msg.text, false);
-  // Teacher's marks on my shared screen: only the desktop app can draw them over the real screen.
-  if (isInk(msg)) return window.huddle?.ink(msg);
+  // Marks: over my real screen if I'm the one sharing (desktop app only), else over the picture I'm watching.
+  if (isInk(msg)) return screenStream ? window.huddle?.ink(msg) : ink.apply(msg);
   if (msg.t === 'mouse') return window.huddle?.input(msg);
   if (msg.t === 'control-request') return answerControl();
   if (msg.t === 'control-stop') return releaseControl(false);
@@ -165,155 +166,16 @@ function onData(msg) {
   render();
 }
 
-// --- annotation tools over the remote screen (Zoom-style bar) ---
-const ink = createInk($('ink'));
-let tool = null, color = 0, current = null; // current: id + start point of the stroke/arrow being drawn
+// --- annotation + remote control tools (tools.js) ---
+const { ink, setTool, fitInk, onControl, answerControl, releaseControl } = createTools({ sendData, toast, isSharing: () => !!screenStream });
 
-function setTool(name) {
-  tool = tool === name ? null : name;
-  for (const b of document.querySelectorAll('[data-tool]')) b.classList.toggle('on', b.dataset.tool === tool);
-  $('ink').className = tool ? `active tool-${tool}` : '';
-  $('text-input').hidden = true;
-}
-
-COLORS.forEach((c, i) => {
-  const b = document.createElement('button');
-  b.style.background = c;
-  b.title = 'Цвет';
-  b.classList.toggle('on', i === color);
-  b.onclick = () => {
-    color = i;
-    for (const s of $('colors').children) s.classList.toggle('on', s === b);
-  };
-  $('colors').append(b);
+// Desktop app while I share: the floating bar's buttons and my own marks.
+window.huddle?.onBarAction?.((a) => {
+  if (a === 'mic') $('mic').click();
+  if (a === 'stop') stopShare();
 });
-
-// Canvas covers exactly the video picture (object-fit: contain leaves letterbox bars).
-function fitInk() {
-  const v = $('screen');
-  if ($('screen-wrap').hidden || !v.videoWidth) return ink.resize(0, 0);
-  const box = v.getBoundingClientRect(), wrap = $('screen-wrap').getBoundingClientRect();
-  const scale = Math.min(box.width / v.videoWidth, box.height / v.videoHeight);
-  const w = v.videoWidth * scale, h = v.videoHeight * scale;
-  $('ink').style.left = box.left - wrap.left + (box.width - w) / 2 + 'px';
-  $('ink').style.top = box.top - wrap.top + (box.height - h) / 2 + 'px';
-  ink.resize(w, h);
-}
-$('screen').addEventListener('resize', fitInk);
-new ResizeObserver(fitInk).observe($('screen-wrap'));
-
-function mark(msg) {
-  ink.apply(msg);
-  sendData(msg);
-}
-const clamp = (v) => Math.min(1, Math.max(0, v));
-const at = (e) => ({ x: clamp(e.offsetX / $('ink').clientWidth), y: clamp(e.offsetY / $('ink').clientHeight) });
-const mouseButton = (e) => (e.button === 2 ? 'right' : 'left');
-const newId = () => Math.random().toString(36).slice(2);
-
-$('ink').onpointerdown = (e) => {
-  const p = at(e);
-  if (tool === 'text') return startText(e, p);
-  $('ink').setPointerCapture(e.pointerId);
-  if (tool === 'control') return sendData({ t: 'mouse', a: 'down', b: mouseButton(e), ...p });
-  if (tool === 'eraser') return erase(p);
-  current = { id: newId(), ...p };
-  if (tool === 'pen') mark({ t: 'line', id: current.id, c: color, ...p });
-};
-$('ink').onpointermove = (e) => {
-  const p = at(e);
-  if (tool === 'control') sendData({ t: 'mouse', a: 'move', ...p });
-  if (tool === 'pointer') mark({ t: 'ptr', ...p });
-  if (tool === 'eraser' && e.buttons) erase(p);
-  if (!current) return;
-  if (tool === 'pen') mark({ t: 'line', id: current.id, c: color, ...p });
-  if (tool === 'arrow') mark({ t: 'arrow', id: current.id, c: color, x1: current.x, y1: current.y, x2: p.x, y2: p.y });
-};
-$('ink').onpointerup = (e) => {
-  if (tool === 'control') sendData({ t: 'mouse', a: 'up', b: mouseButton(e), ...at(e) });
-  current = null;
-};
-$('ink').addEventListener('wheel', (e) => {
-  if (tool !== 'control') return;
-  e.preventDefault();
-  sendData({ t: 'mouse', a: 'wheel', dy: e.deltaY, ...at(e) });
-}, { passive: false });
-$('ink').oncontextmenu = (e) => tool === 'control' && e.preventDefault();
-$('ink').onpointerleave = () => tool === 'pointer' && mark({ t: 'ptr', x: null, y: null });
-
-function erase(p) {
-  const id = ink.hit(p.x, p.y);
-  if (id) mark({ t: 'erase', id });
-}
-
-function startText(e, p) {
-  e.preventDefault();
-  const input = $('text-input');
-  input.value = '';
-  input.style.left = $('ink').offsetLeft + e.offsetX + 'px';
-  input.style.top = $('ink').offsetTop + e.offsetY - 16 + 'px';
-  input.style.color = COLORS[color];
-  input.hidden = false;
-  input.dataset.x = p.x;
-  input.dataset.y = p.y;
-  setTimeout(() => input.focus());
-}
-function commitText() {
-  const input = $('text-input');
-  if (input.hidden) return;
-  input.hidden = true;
-  const s = input.value.trim();
-  if (s) mark({ t: 'text', id: newId(), c: color, x: +input.dataset.x, y: +input.dataset.y, s });
-}
-$('text-input').onkeydown = (e) => {
-  if (e.key === 'Enter') commitText();
-  if (e.key === 'Escape') $('text-input').hidden = true;
-};
-$('text-input').onblur = commitText;
-
-for (const b of document.querySelectorAll('[data-tool]')) {
-  if (b.dataset.tool !== 'control') b.onclick = () => setTool(b.dataset.tool);
-}
-$('undo').onclick = () => mark({ t: 'undo' });
-$('clear').onclick = () => mark({ t: 'clear' });
-
-// --- remote mouse. Teacher asks; the student's desktop app asks the student and does the clicking. ---
-$('mouse').onclick = () => {
-  if (tool === 'control') {
-    setTool(null);
-    return sendData({ t: 'control-stop' });
-  }
-  if (sendData({ t: 'control-request' })) $('mouse').querySelector('span').textContent = 'Ждём ученика…';
-};
-
-function onControl({ on, reason }) {
-  $('mouse').querySelector('span').textContent = 'Управление';
-  if (on) return tool !== 'control' && setTool('control');
-  if (tool === 'control') setTool(null);
-  const why = {
-    noapp: 'Управление работает, только если ученик зашёл через приложение Huddle',
-    noshare: 'Сначала ученик должен показать экран',
-    denied: 'Ученик отклонил управление',
-    revoked: 'Ученик отключил управление',
-  }[reason];
-  if (why) toast(why);
-}
-
-// Student side.
-async function answerControl() {
-  if (!window.huddle?.requestControl) return sendData({ t: 'control', on: false, reason: 'noapp' });
-  if (!screenStream) return sendData({ t: 'control', on: false, reason: 'noshare' });
-  const on = await window.huddle.requestControl();
-  $('release').hidden = !on;
-  sendData({ t: 'control', on, reason: on ? undefined : 'denied' });
-}
-
-function releaseControl(tellTeacher) {
-  window.huddle?.stopControl?.();
-  $('release').hidden = true;
-  if (tellTeacher) sendData({ t: 'control', on: false, reason: 'revoked' });
-}
-$('release').onclick = () => releaseControl(true);
+window.huddle?.onInkOut?.((m) => sendData(m));
+const reportMic = () => window.huddle?.barState?.({ mic: !!local.getAudioTracks()[0]?.enabled });
 window.huddle?.onControlOff?.(() => { $('release').hidden = true; sendData({ t: 'control', on: false, reason: 'revoked' }); });
 
 // --- chat ---
@@ -393,6 +255,7 @@ async function toggleShare() {
   await track.applyConstraints({ width: { max: 1920 }, height: { max: 1080 }, frameRate: { max: 15 } }).catch(() => {});
   track.onended = stopShare;    // browser's own "Stop sharing" button
   if (pc) addScreen();
+  reportMic();
   $('share').classList.add('on');
   $('share').querySelector('span').textContent = 'Остановить';
   $('sharing').hidden = false;
@@ -414,6 +277,7 @@ function toggle(button, tracks, labels) {
     button.classList.toggle('off', !enabled);
     label.textContent = labels[enabled ? 0 : 1];
     sendState();
+    reportMic();
     render();
   };
 }
