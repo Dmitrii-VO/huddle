@@ -1,0 +1,12 @@
+{
+  "name": "huddle",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

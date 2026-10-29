@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Huddle</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <span id="status">Подключение…</span>
+    <button id="copy">Скопировать ссылку</button>
+  </header>
+
+  <main id="stage">
+    <video id="screen" autoplay playsinline hidden></video>
+    <video id="remote" autoplay playsinline></video>
+    <video id="local" autoplay playsinline muted></video>
+    <div id="sharing" hidden>Вы показываете экран</div>
+  </main>
+
+  <aside id="chat" hidden>
+    <div id="messages"></div>
+    <form id="chat-form"><input id="chat-input" placeholder="Сообщение…" autocomplete="off"></form>
+  </aside>
+
+  <footer>
+    <button id="mic">Микрофон</button>
+    <button id="cam">Камера</button>
+    <button id="share">Показать экран</button>
+    <button id="chat-toggle">Чат</button>
+  </footer>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
