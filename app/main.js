@@ -1,11 +1,19 @@
 // Student desktop app: the website in a window, plus what a browser can't do —
-// a click-through overlay over the shared screen for the teacher's pointer and pen.
-const { app, BrowserWindow, desktopCapturer, dialog, ipcMain, screen, session, shell, systemPreferences } = require('electron');
+// a click-through overlay over the shared screen for the teacher's pointer and pen,
+// and letting the teacher drive the mouse after the student agrees.
+const { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, screen, session, shell, systemPreferences } = require('electron');
 const path = require('node:path');
 
 const SITE = process.env.HUDDLE_URL || 'https://176-108-255-4.sslip.io';
 const preload = path.join(__dirname, 'preload.js');
+const STOP_KEY = 'CommandOrControl+Alt+X';
+const STOP_LABEL = process.platform === 'darwin' ? '⌘⌥X' : 'Ctrl+Alt+X';
+const isMac = process.platform === 'darwin';
+
 let win = null, overlay = null;
+let sharedDisplay = null; // set while the screen is shared
+let control = false;      // consent lives here, never in the (remote) page
+let input = null;         // native module, loaded on first use
 
 function createWindow() {
   win = new BrowserWindow({ width: 1200, height: 800, title: 'Huddle', autoHideMenuBar: true, webPreferences: { preload } });
@@ -14,6 +22,7 @@ function createWindow() {
   win.webContents.on('will-navigate', (e, url) => {
     if (!url.startsWith(SITE + '/') && !url.startsWith('file:')) e.preventDefault();
   });
+  win.webContents.on('did-navigate', () => setControl(false));
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.on('closed', () => { overlay?.destroy(); app.quit(); });
 }
@@ -36,6 +45,62 @@ function showOverlay(display) {
   overlay.on('closed', () => (overlay = null));
 }
 
+function setControl(on) {
+  if (control === on) return;
+  control = on;
+  if (on) {
+    globalShortcut.register(STOP_KEY, () => {
+      setControl(false);
+      win?.webContents.send('control-off');
+    });
+  } else {
+    globalShortcut.unregister(STOP_KEY);
+  }
+  overlay?.webContents.send('banner', on ? `Мышью управляет преподаватель · ${STOP_LABEL} — отключить` : '');
+}
+
+// Normalized (0..1) point on the shared display -> what the OS input API expects.
+function toScreen(x, y) {
+  const b = sharedDisplay.bounds;
+  const p = { x: Math.round(b.x + x * b.width), y: Math.round(b.y + y * b.height) };
+  return isMac ? p : screen.dipToScreenPoint(p); // Windows SetCursorPos takes physical pixels
+}
+
+async function askControl() {
+  if (!sharedDisplay) return false;
+  if (isMac && !systemPreferences.isTrustedAccessibilityClient(true)) {
+    await dialog.showMessageBox(win, {
+      type: 'warning',
+      message: 'Разрешите Huddle управление компьютером',
+      detail: 'Системные настройки → Конфиденциальность и безопасность → Универсальный доступ: включите Huddle, затем закройте и снова откройте приложение.',
+    });
+    return false;
+  }
+  const { response } = process.env.HUDDLE_TEST_ALLOW_CONTROL
+    ? { response: 0 }
+    : await dialog.showMessageBox(win, {
+        type: 'question',
+        message: 'Преподаватель просит управление мышью',
+        detail: `Отключить можно в любой момент: ${STOP_LABEL}, кнопка в окне Huddle или остановка показа экрана.`,
+        buttons: ['Разрешить', 'Отклонить'],
+        defaultId: 1,
+        cancelId: 1,
+      });
+  setControl(response === 0 && !!sharedDisplay);
+  return control;
+}
+
+const unit = (v) => typeof v === 'number' && v >= 0 && v <= 1;
+
+function applyInput(m) {
+  if (!control || !sharedDisplay || !m || !unit(m.x) || !unit(m.y)) return;
+  input ??= require('./input');
+  const p = toScreen(m.x, m.y);
+  input.move(p.x, p.y);
+  if ((m.a === 'down' || m.a === 'up') && (m.b === 'left' || m.b === 'right')) input.button(m.b, m.a === 'down');
+  if (m.a === 'wheel' && Number.isFinite(m.dy)) input.wheel(Math.max(-1000, Math.min(1000, m.dy)));
+}
+
 app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => {
     cb(wc.getURL().startsWith(SITE + '/') && ['media', 'display-capture', 'clipboard-sanitized-write'].includes(permission));
@@ -44,7 +109,7 @@ app.whenReady().then(() => {
   session.defaultSession.setDisplayMediaRequestHandler(async (_req, cb) => {
     const display = screen.getPrimaryDisplay();
     const sources = await desktopCapturer.getSources({ types: ['screen'] }); // on macOS this also adds the app to the Screen Recording list
-    if (process.platform === 'darwin' && systemPreferences.getMediaAccessStatus('screen') !== 'granted') {
+    if (isMac && systemPreferences.getMediaAccessStatus('screen') !== 'granted') {
       const { response } = await dialog.showMessageBox(win, {
         type: 'warning',
         message: 'Разрешите Huddle запись экрана',
@@ -56,18 +121,25 @@ app.whenReady().then(() => {
     }
     const source = sources.find((s) => s.display_id === String(display.id)) ?? sources[0];
     if (!source) return cb({});
+    sharedDisplay = display;
     showOverlay(display);
     cb({ video: source });
   });
 
-  ipcMain.on('ink', (e, msg) => {
-    if (e.sender === win?.webContents) overlay?.webContents.send('ink', msg);
-  });
+  const fromWin = (e) => e.sender === win?.webContents;
+  ipcMain.on('ink', (e, msg) => fromWin(e) && overlay?.webContents.send('ink', msg));
   ipcMain.on('share-ended', (e) => {
-    if (e.sender === win?.webContents) overlay?.destroy();
+    if (!fromWin(e)) return;
+    setControl(false);
+    sharedDisplay = null;
+    overlay?.destroy();
   });
+  ipcMain.handle('control-request', (e) => (fromWin(e) ? askControl() : false));
+  ipcMain.on('control-stop', (e) => fromWin(e) && setControl(false));
+  ipcMain.on('input', (e, m) => fromWin(e) && applyInput(m));
 
   createWindow();
 });
 
+app.on('will-quit', () => globalShortcut.unregisterAll());
 app.on('window-all-closed', () => app.quit());

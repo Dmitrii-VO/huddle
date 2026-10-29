@@ -2,10 +2,15 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <style>html, body { margin: 0; overflow: hidden; background: transparent; } canvas { display: block; }</style>
+  <style>
+    html, body { margin: 0; overflow: hidden; background: transparent; } canvas { display: block; }
+    #banner { position: fixed; top: 8px; left: 50%; transform: translateX(-50%); padding: 6px 14px; border-radius: 8px;
+              background: rgba(180, 30, 50, 0.9); color: #fff; font: 14px system-ui, sans-serif; }
+  </style>
 </head>
 <body>
   <canvas id="ink"></canvas>
+  <div id="banner" hidden></div>
   <script type="module">
     // Transparent always-on-top window in the student app, fed over IPC.
     import { createInk } from '/ink.js';
@@ -14,6 +19,8 @@
     addEventListener('resize', fit);
     fit();
     window.huddle?.onInk(ink.apply);
+    const banner = document.getElementById('banner');
+    window.huddle?.onBanner((text) => { banner.textContent = text; banner.hidden = !text; });
   </script>
 </body>
 </html>

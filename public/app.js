@@ -107,6 +107,7 @@ function stop() {
   remoteStreams.clear();
   remoteCamId = remoteScreenId = null;
   window.huddle?.ink({ t: 'clear' });
+  releaseControl(false);
   render();
 }
 
@@ -135,6 +136,10 @@ function onData(msg) {
   if (msg.t === 'chat') addMessage(msg.text, false);
   // Teacher's marks on my shared screen: only the desktop app can draw them over the real screen.
   if (isInk(msg)) return window.huddle?.ink(msg);
+  if (msg.t === 'mouse') return window.huddle?.input(msg);
+  if (msg.t === 'control-request') return answerControl();
+  if (msg.t === 'control-stop') return releaseControl(false);
+  if (msg.t === 'control') return onControl(msg);
   render();
 }
 
@@ -145,6 +150,7 @@ let tool = null, strokeId = null;
 function setTool(name) {
   tool = tool === name ? null : name;
   for (const b of document.querySelectorAll('[data-tool]')) b.classList.toggle('on', b.dataset.tool === tool);
+  $('mouse').classList.toggle('on', tool === 'control');
   $('ink').classList.toggle('active', !!tool);
 }
 
@@ -166,22 +172,77 @@ function mark(msg) {
   ink.apply(msg);
   sendData(msg);
 }
-const at = (e) => ({ x: e.offsetX / $('ink').clientWidth, y: e.offsetY / $('ink').clientHeight });
+const clamp = (v) => Math.min(1, Math.max(0, v));
+const at = (e) => ({ x: clamp(e.offsetX / $('ink').clientWidth), y: clamp(e.offsetY / $('ink').clientHeight) });
+const mouseButton = (e) => (e.button === 2 ? 'right' : 'left');
 
 $('ink').onpointerdown = (e) => {
+  if (tool === 'control') {
+    $('ink').setPointerCapture(e.pointerId);
+    return sendData({ t: 'mouse', a: 'down', b: mouseButton(e), ...at(e) });
+  }
   if (tool !== 'pen') return;
   $('ink').setPointerCapture(e.pointerId);
   strokeId = Math.random().toString(36).slice(2);
   mark({ t: 'line', id: strokeId, ...at(e) });
 };
 $('ink').onpointermove = (e) => {
+  if (tool === 'control') sendData({ t: 'mouse', a: 'move', ...at(e) });
   if (tool === 'pointer') mark({ t: 'ptr', ...at(e) });
   if (tool === 'pen' && strokeId) mark({ t: 'line', id: strokeId, ...at(e) });
 };
-$('ink').onpointerup = () => (strokeId = null);
+$('ink').onpointerup = (e) => {
+  if (tool === 'control') sendData({ t: 'mouse', a: 'up', b: mouseButton(e), ...at(e) });
+  strokeId = null;
+};
+$('ink').addEventListener('wheel', (e) => {
+  if (tool !== 'control') return;
+  e.preventDefault();
+  sendData({ t: 'mouse', a: 'wheel', dy: e.deltaY, ...at(e) });
+}, { passive: false });
+$('ink').oncontextmenu = (e) => tool === 'control' && e.preventDefault();
 $('ink').onpointerleave = () => tool === 'pointer' && mark({ t: 'ptr', x: null, y: null });
 for (const b of document.querySelectorAll('[data-tool]')) b.onclick = () => setTool(b.dataset.tool);
 $('clear').onclick = () => mark({ t: 'clear' });
+
+// --- remote mouse. Teacher asks; the student's desktop app asks the student and does the clicking. ---
+$('mouse').onclick = () => {
+  if (tool === 'control') {
+    setTool(null);
+    return sendData({ t: 'control-stop' });
+  }
+  if (sendData({ t: 'control-request' })) $('mouse').textContent = 'Ждём ученика…';
+};
+
+function onControl({ on, reason }) {
+  $('mouse').textContent = 'Мышь';
+  if (on) return tool !== 'control' && setTool('control');
+  if (tool === 'control') setTool(null);
+  const why = {
+    noapp: 'Управление работает, только если ученик зашёл через приложение Huddle',
+    noshare: 'Сначала ученик должен показать экран',
+    denied: 'Ученик отклонил управление',
+    revoked: 'Ученик отключил управление',
+  }[reason];
+  if (why) status(why);
+}
+
+// Student side.
+async function answerControl() {
+  if (!window.huddle?.requestControl) return sendData({ t: 'control', on: false, reason: 'noapp' });
+  if (!screenStream) return sendData({ t: 'control', on: false, reason: 'noshare' });
+  const on = await window.huddle.requestControl();
+  $('release').hidden = !on;
+  sendData({ t: 'control', on, reason: on ? undefined : 'denied' });
+}
+
+function releaseControl(tellTeacher) {
+  window.huddle?.stopControl?.();
+  $('release').hidden = true;
+  if (tellTeacher) sendData({ t: 'control', on: false, reason: 'revoked' });
+}
+$('release').onclick = () => releaseControl(true);
+window.huddle?.onControlOff?.(() => { $('release').hidden = true; sendData({ t: 'control', on: false, reason: 'revoked' }); });
 
 function addMessage(text, mine, delivered = true) {
   const p = document.createElement('p');
@@ -213,6 +274,7 @@ function stopShare() {
   screenStream = null;
   sendData({ t: 'screen', id: null });
   window.huddle?.shareEnded();
+  $('release').hidden = true;
   $('share').classList.remove('on');
   $('sharing').hidden = true;
 }

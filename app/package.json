@@ -12,7 +12,12 @@
   "build": {
     "appId": "ru.huddle.app",
     "artifactName": "Huddle-${os}-${arch}.${ext}",
-    "files": ["main.js", "preload.js", "start.html"],
+    "files": [
+      "main.js",
+      "preload.js",
+      "input.js",
+      "start.html"
+    ],
     "mac": {
       "extendInfo": {
         "NSCameraUsageDescription": "Камера для видеозвонка",
@@ -23,5 +28,8 @@
   "devDependencies": {
     "electron": "^45.1.0",
     "electron-builder": "^26.18.0"
+  },
+  "dependencies": {
+    "koffi": "^3.3.5"
   }
 }
