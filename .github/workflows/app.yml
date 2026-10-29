@@ -22,6 +22,9 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
+      # Universal mac build needs koffi's native binary for both archs; npm only installs the runner's.
+      - if: runner.os == 'macOS'
+        run: npm install --no-save --force @koromix/koffi-darwin-x64@3.3.5 @koromix/koffi-darwin-arm64@3.3.5
       - run: ${{ matrix.cmd }} --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false # unsigned build

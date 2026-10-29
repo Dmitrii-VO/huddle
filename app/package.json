@@ -19,6 +19,7 @@
       "start.html"
     ],
     "mac": {
+      "x64ArchFiles": "**/node_modules/@koromix/koffi-darwin-*/**",
       "extendInfo": {
         "NSCameraUsageDescription": "Камера для видеозвонка",
         "NSMicrophoneUsageDescription": "Микрофон для видеозвонка"

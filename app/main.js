@@ -13,7 +13,9 @@ const isMac = process.platform === 'darwin';
 let win = null, overlay = null;
 let sharedDisplay = null; // set while the screen is shared
 let control = false;      // consent lives here, never in the (remote) page
+let consentGen = 0;       // bumped on navigation / share end: a pending "Разрешить" must not outlive them
 let input = null;         // native module, loaded on first use
+const held = new Set();   // synthetic buttons currently down
 
 function createWindow() {
   win = new BrowserWindow({ width: 1200, height: 800, title: 'Huddle', autoHideMenuBar: true, webPreferences: { preload } });
@@ -22,7 +24,7 @@ function createWindow() {
   win.webContents.on('will-navigate', (e, url) => {
     if (!url.startsWith(SITE + '/') && !url.startsWith('file:')) e.preventDefault();
   });
-  win.webContents.on('did-navigate', () => setControl(false));
+  win.webContents.on('did-navigate', () => { consentGen++; setControl(false); });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.on('closed', () => { overlay?.destroy(); app.quit(); });
 }
@@ -55,6 +57,8 @@ function setControl(on) {
     });
   } else {
     globalShortcut.unregister(STOP_KEY);
+    for (const b of held) input.button(b, false); // don't leave a drag hanging
+    held.clear();
   }
   overlay?.webContents.send('banner', on ? `Мышью управляет преподаватель · ${STOP_LABEL} — отключить` : '');
 }
@@ -68,6 +72,7 @@ function toScreen(x, y) {
 
 async function askControl() {
   if (!sharedDisplay) return false;
+  const gen = consentGen;
   if (isMac && !systemPreferences.isTrustedAccessibilityClient(true)) {
     await dialog.showMessageBox(win, {
       type: 'warning',
@@ -86,7 +91,7 @@ async function askControl() {
         defaultId: 1,
         cancelId: 1,
       });
-  setControl(response === 0 && !!sharedDisplay);
+  setControl(response === 0 && !!sharedDisplay && gen === consentGen);
   return control;
 }
 
@@ -97,7 +102,10 @@ function applyInput(m) {
   input ??= require('./input');
   const p = toScreen(m.x, m.y);
   input.move(p.x, p.y);
-  if ((m.a === 'down' || m.a === 'up') && (m.b === 'left' || m.b === 'right')) input.button(m.b, m.a === 'down');
+  if ((m.a === 'down' || m.a === 'up') && (m.b === 'left' || m.b === 'right')) {
+    input.button(m.b, m.a === 'down');
+    m.a === 'down' ? held.add(m.b) : held.delete(m.b);
+  }
   if (m.a === 'wheel' && Number.isFinite(m.dy)) input.wheel(Math.max(-1000, Math.min(1000, m.dy)));
 }
 
@@ -130,6 +138,7 @@ app.whenReady().then(() => {
   ipcMain.on('ink', (e, msg) => fromWin(e) && overlay?.webContents.send('ink', msg));
   ipcMain.on('share-ended', (e) => {
     if (!fromWin(e)) return;
+    consentGen++;
     setControl(false);
     sharedDisplay = null;
     overlay?.destroy();
