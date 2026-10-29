@@ -93,6 +93,9 @@ svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width:
 .tb.share svg { color: #34c759; }
 .tb.share.on svg { color: #ff453a; }
 .tb.danger { color: #ff6b6b; }
+#net.good svg { color: #34c759; }
+#net.fair svg { color: #ffcc00; }
+#net.poor svg { color: #ff453a; }
 #unread { position: absolute; top: 4px; right: 22px; width: 9px; height: 9px; border-radius: 50%; background: #ff453a; }
 .leave { padding: 9px 18px; border-radius: 8px; background: #e02828; color: #fff; font-weight: 600; }
 .leave:hover { background: #c41f1f; }

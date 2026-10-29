@@ -351,6 +351,18 @@ $('chat-close').onclick = toggleChat;
 function addScreen() {
   sendData({ t: 'screen', id: screenStream.id });
   screenSenders = screenStream.getTracks().map((t) => pc.addTrack(t, screenStream));
+  for (const s of screenSenders) limitScreen(s);
+}
+
+// Retina / 4K screens at full size choke the encoder (seconds of lag). Send at most ~1080p.
+async function limitScreen(sender) {
+  const { width = 0, height = 0 } = sender.track.getSettings();
+  const scale = Math.max(1, width / 1920, height / 1080);
+  const params = sender.getParameters();
+  if (!params.encodings?.length) params.encodings = [{}];
+  params.encodings[0].scaleResolutionDownBy = scale;
+  params.encodings[0].maxBitrate = 2_500_000;
+  try { await sender.setParameters(params); } catch (e) { console.warn('setParameters', e); }
 }
 
 function stopShare() {
@@ -377,6 +389,8 @@ async function toggleShare() {
   }
   const track = screenStream.getVideoTracks()[0];
   track.contentHint = 'detail'; // keep text sharp rather than smooth motion
+  // Ask the capturer itself for less, where supported (Safari rejects size limits in getDisplayMedia).
+  await track.applyConstraints({ width: { max: 1920 }, height: { max: 1080 }, frameRate: { max: 15 } }).catch(() => {});
   track.onended = stopShare;    // browser's own "Stop sharing" button
   if (pc) addScreen();
   $('share').classList.add('on');
@@ -444,6 +458,27 @@ $('leave').onclick = () => {
   local.getTracks().forEach((t) => t.stop());
   document.body.innerHTML = '<div class="left-screen"><h2>Вы вышли из урока</h2><button onclick="location.reload()">Вернуться</button></div>';
 };
+
+// --- connection quality (like Zoom's statistics): path, round trip, incoming fps ---
+let netInfo = '';
+setInterval(async () => {
+  if (pc?.connectionState !== 'connected') return ($('net').hidden = true);
+  const stats = await pc.getStats();
+  let pair = null, fps = 0;
+  stats.forEach((r) => {
+    if (r.type === 'transport' && r.selectedCandidatePairId) pair = stats.get(r.selectedCandidatePairId);
+    if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded') pair ??= r;
+    if (r.type === 'inbound-rtp' && r.kind === 'video') fps = Math.max(fps, r.framesPerSecond ?? 0);
+  });
+  if (!pair) return;
+  const rtt = Math.round((pair.currentRoundTripTime ?? 0) * 1000);
+  const relay = stats.get(pair.localCandidateId)?.candidateType === 'relay' || stats.get(pair.remoteCandidateId)?.candidateType === 'relay';
+  $('net').hidden = false;
+  $('net').className = `tb ${rtt < 150 ? 'good' : rtt < 300 ? 'fair' : 'poor'}`;
+  $('net').querySelector('span').textContent = `${rtt} мс`;
+  netInfo = `${relay ? 'Через сервер' : 'Напрямую'} · задержка сети ${rtt} мс · входящее видео ${Math.round(fps)} к/с`;
+}, 2000);
+$('net').onclick = () => toast(netInfo);
 
 $('copy').onclick = async () => {
   await navigator.clipboard.writeText(location.href);
