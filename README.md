@@ -9,7 +9,13 @@ Media goes peer-to-peer (WebRTC); the server only does signaling and TURN fallba
     npm start        # http://localhost:3000 — open in two tabs
     npm test         # signaling smoke test
 
-## VPS (Ubuntu)
+## Production
+
+Live at https://176-108-255-4.sslip.io on the `cloud` VPS, behind the existing nginx
+(`/etc/nginx/sites-enabled/huddle.conf`, certbot cert), app on 127.0.0.1:3020 (`huddle.service`),
+coturn on 3478. Update: `sh deploy/update.sh`.
+
+## Fresh VPS (Ubuntu, nothing on 80/443)
 
     git clone <repo> /opt/huddle && cd /opt/huddle
     sudo sh deploy/setup.sh

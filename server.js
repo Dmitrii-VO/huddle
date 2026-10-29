@@ -26,7 +26,8 @@ function iceServers() {
 }
 
 const server = http.createServer((req, res) => {
-  const url = new URL(req.url, 'http://x');
+  const url = URL.parse(req.url, 'http://x');
+  if (!url) { res.writeHead(400); return res.end(); }
   if (url.pathname === '/') {
     res.writeHead(302, { Location: '/r/' + crypto.randomBytes(16).toString('base64url') });
     return res.end();
@@ -44,8 +45,9 @@ const server = http.createServer((req, res) => {
 // ponytail: rooms live in memory; a server restart drops active calls (clients reconnect on reload).
 const rooms = new Map(); // code -> Set<ws>
 
-new WebSocketServer({ server }).on('connection', (ws, req) => {
-  const code = new URL(req.url, 'http://x').searchParams.get('room');
+new WebSocketServer({ server, maxPayload: 64 * 1024 }).on('connection', (ws, req) => {
+  ws.on('error', () => ws.terminate()); // bad frames must not crash the process
+  const code = URL.parse(req.url, 'http://x')?.searchParams.get('room');
   if (!code || !/^[\w-]{4,32}$/.test(code)) return ws.close(4000, 'bad room');
   const room = rooms.get(code) ?? new Set();
   if (room.size >= 2) return ws.close(4001, 'full');
@@ -66,4 +68,4 @@ new WebSocketServer({ server }).on('connection', (ws, req) => {
   });
 });
 
-server.listen(PORT, () => console.log(`Huddle on http://localhost:${PORT}`));
+server.listen(PORT, '127.0.0.1', () => console.log(`Huddle on http://localhost:${PORT}`));
