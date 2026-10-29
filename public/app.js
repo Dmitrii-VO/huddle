@@ -1,18 +1,29 @@
-import { createInk, isInk } from '/ink.js';
+import { COLORS, createInk, isInk } from '/ink.js';
 
 const $ = (id) => document.getElementById(id);
 const room = location.pathname.split('/')[2];
-const status = (text) => ($('status').textContent = text);
+// Like Zoom, say nothing while all is well; only waiting / trouble shows up.
+function status(text) {
+  $('status').textContent = text;
+  $('status').hidden = text === 'На связи';
+}
+
+let toastTimer;
+function toast(text) {
+  $('toast').textContent = text;
+  $('toast').hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => ($('toast').hidden = true), 3500);
+}
 
 const { iceServers } = await (await fetch('/config')).json();
 const local = await getMedia();
 $('local').srcObject = local;
-$('local').hidden = !local.getVideoTracks().length;
 
 let pc = null, dc = null, polite = false, makingOffer = false, ignoreOffer = false;
 let screenStream = null, screenSenders = [];
 const remoteStreams = new Map();
-let remoteCamId = null, remoteScreenId = null;
+let remoteCamId = null, remoteScreenId = null, remoteState = { mic: true, cam: true };
 
 // Camera may be missing or denied: fall back to audio, then to nothing.
 async function getMedia() {
@@ -29,7 +40,7 @@ const send = (msg) => ws.send(JSON.stringify(msg));
 ws.onmessage = ({ data }) => {
   const msg = JSON.parse(data);
   if (msg.type === 'joined') {
-    status(msg.peer ? 'Соединение…' : 'Ждём собеседника — отправьте ему ссылку');
+    status(msg.peer ? 'Соединение…' : 'Ждём собеседника — нажмите «Пригласить»');
     polite = msg.peer; // the joiner waits for the first offer instead of racing its own
   } else if (msg.type === 'peer-joined') {
     polite = false; start();
@@ -70,6 +81,7 @@ function start() {
   dc.onmessage = (e) => onData(JSON.parse(e.data));
   dc.onopen = () => {
     sendData({ t: 'cam', id: local.id });
+    sendState();
     if (screenStream) sendData({ t: 'screen', id: screenStream.id });
   };
 
@@ -106,6 +118,7 @@ function stop() {
   screenSenders = [];
   remoteStreams.clear();
   remoteCamId = remoteScreenId = null;
+  remoteState = { mic: true, cam: true };
   window.huddle?.ink({ t: 'clear' });
   releaseControl(false);
   render();
@@ -116,23 +129,32 @@ function render() {
   const cam = remoteStreams.get(remoteCamId) ?? null;
   if ($('screen').srcObject !== screen) $('screen').srcObject = screen;
   if ($('remote').srcObject !== cam) $('remote').srcObject = cam;
-  $('screen').hidden = !screen;
+  $('screen-wrap').hidden = !screen;
   $('stage').classList.toggle('has-screen', !!screen);
-  $('tools').hidden = !screen;
+  $('remote-tile').classList.toggle('nocam', !cam?.getVideoTracks().length || !remoteState.cam);
+  $('remote-tile').querySelector('.muted').toggleAttribute('hidden', remoteState.mic); // <svg> has no .hidden property
+  $('local-tile').classList.toggle('nocam', !local.getVideoTracks()[0]?.enabled);
   if (!screen) { setTool(null); ink.apply({ t: 'clear' }); }
   fitInk();
 }
 
-// --- data channel: stream labels + chat ---
+// --- data channel ---
 function sendData(msg) {
   if (dc?.readyState !== 'open') return false;
   dc.send(JSON.stringify(msg));
   return true;
 }
 
+const sendState = () => sendData({
+  t: 'state',
+  mic: !!local.getAudioTracks()[0]?.enabled,
+  cam: !!local.getVideoTracks()[0]?.enabled,
+});
+
 function onData(msg) {
   if (msg.t === 'cam') remoteCamId = msg.id;
   if (msg.t === 'screen') remoteScreenId = msg.id;
+  if (msg.t === 'state') remoteState = { mic: !!msg.mic, cam: !!msg.cam };
   if (msg.t === 'chat') addMessage(msg.text, false);
   // Teacher's marks on my shared screen: only the desktop app can draw them over the real screen.
   if (isInk(msg)) return window.huddle?.ink(msg);
@@ -143,30 +165,42 @@ function onData(msg) {
   render();
 }
 
-// --- lesson tools: pointer and pen over the remote screen ---
+// --- annotation tools over the remote screen (Zoom-style bar) ---
 const ink = createInk($('ink'));
-let tool = null, strokeId = null;
+let tool = null, color = 0, current = null; // current: id + start point of the stroke/arrow being drawn
 
 function setTool(name) {
   tool = tool === name ? null : name;
   for (const b of document.querySelectorAll('[data-tool]')) b.classList.toggle('on', b.dataset.tool === tool);
-  $('mouse').classList.toggle('on', tool === 'control');
-  $('ink').classList.toggle('active', !!tool);
+  $('ink').className = tool ? `active tool-${tool}` : '';
+  $('text-input').hidden = true;
 }
+
+COLORS.forEach((c, i) => {
+  const b = document.createElement('button');
+  b.style.background = c;
+  b.title = 'Цвет';
+  b.classList.toggle('on', i === color);
+  b.onclick = () => {
+    color = i;
+    for (const s of $('colors').children) s.classList.toggle('on', s === b);
+  };
+  $('colors').append(b);
+});
 
 // Canvas covers exactly the video picture (object-fit: contain leaves letterbox bars).
 function fitInk() {
   const v = $('screen');
-  if (v.hidden || !v.videoWidth) return ink.resize(0, 0);
-  const box = v.getBoundingClientRect(), stage = $('stage').getBoundingClientRect();
+  if ($('screen-wrap').hidden || !v.videoWidth) return ink.resize(0, 0);
+  const box = v.getBoundingClientRect(), wrap = $('screen-wrap').getBoundingClientRect();
   const scale = Math.min(box.width / v.videoWidth, box.height / v.videoHeight);
   const w = v.videoWidth * scale, h = v.videoHeight * scale;
-  $('ink').style.left = box.left - stage.left + (box.width - w) / 2 + 'px';
-  $('ink').style.top = box.top - stage.top + (box.height - h) / 2 + 'px';
+  $('ink').style.left = box.left - wrap.left + (box.width - w) / 2 + 'px';
+  $('ink').style.top = box.top - wrap.top + (box.height - h) / 2 + 'px';
   ink.resize(w, h);
 }
 $('screen').addEventListener('resize', fitInk);
-addEventListener('resize', fitInk);
+new ResizeObserver(fitInk).observe($('screen-wrap'));
 
 function mark(msg) {
   ink.apply(msg);
@@ -175,25 +209,29 @@ function mark(msg) {
 const clamp = (v) => Math.min(1, Math.max(0, v));
 const at = (e) => ({ x: clamp(e.offsetX / $('ink').clientWidth), y: clamp(e.offsetY / $('ink').clientHeight) });
 const mouseButton = (e) => (e.button === 2 ? 'right' : 'left');
+const newId = () => Math.random().toString(36).slice(2);
 
 $('ink').onpointerdown = (e) => {
-  if (tool === 'control') {
-    $('ink').setPointerCapture(e.pointerId);
-    return sendData({ t: 'mouse', a: 'down', b: mouseButton(e), ...at(e) });
-  }
-  if (tool !== 'pen') return;
+  const p = at(e);
+  if (tool === 'text') return startText(e, p);
   $('ink').setPointerCapture(e.pointerId);
-  strokeId = Math.random().toString(36).slice(2);
-  mark({ t: 'line', id: strokeId, ...at(e) });
+  if (tool === 'control') return sendData({ t: 'mouse', a: 'down', b: mouseButton(e), ...p });
+  if (tool === 'eraser') return erase(p);
+  current = { id: newId(), ...p };
+  if (tool === 'pen') mark({ t: 'line', id: current.id, c: color, ...p });
 };
 $('ink').onpointermove = (e) => {
-  if (tool === 'control') sendData({ t: 'mouse', a: 'move', ...at(e) });
-  if (tool === 'pointer') mark({ t: 'ptr', ...at(e) });
-  if (tool === 'pen' && strokeId) mark({ t: 'line', id: strokeId, ...at(e) });
+  const p = at(e);
+  if (tool === 'control') sendData({ t: 'mouse', a: 'move', ...p });
+  if (tool === 'pointer') mark({ t: 'ptr', ...p });
+  if (tool === 'eraser' && e.buttons) erase(p);
+  if (!current) return;
+  if (tool === 'pen') mark({ t: 'line', id: current.id, c: color, ...p });
+  if (tool === 'arrow') mark({ t: 'arrow', id: current.id, c: color, x1: current.x, y1: current.y, x2: p.x, y2: p.y });
 };
 $('ink').onpointerup = (e) => {
   if (tool === 'control') sendData({ t: 'mouse', a: 'up', b: mouseButton(e), ...at(e) });
-  strokeId = null;
+  current = null;
 };
 $('ink').addEventListener('wheel', (e) => {
   if (tool !== 'control') return;
@@ -202,7 +240,41 @@ $('ink').addEventListener('wheel', (e) => {
 }, { passive: false });
 $('ink').oncontextmenu = (e) => tool === 'control' && e.preventDefault();
 $('ink').onpointerleave = () => tool === 'pointer' && mark({ t: 'ptr', x: null, y: null });
-for (const b of document.querySelectorAll('[data-tool]')) b.onclick = () => setTool(b.dataset.tool);
+
+function erase(p) {
+  const id = ink.hit(p.x, p.y);
+  if (id) mark({ t: 'erase', id });
+}
+
+function startText(e, p) {
+  e.preventDefault();
+  const input = $('text-input');
+  input.value = '';
+  input.style.left = $('ink').offsetLeft + e.offsetX + 'px';
+  input.style.top = $('ink').offsetTop + e.offsetY - 16 + 'px';
+  input.style.color = COLORS[color];
+  input.hidden = false;
+  input.dataset.x = p.x;
+  input.dataset.y = p.y;
+  setTimeout(() => input.focus());
+}
+function commitText() {
+  const input = $('text-input');
+  if (input.hidden) return;
+  input.hidden = true;
+  const s = input.value.trim();
+  if (s) mark({ t: 'text', id: newId(), c: color, x: +input.dataset.x, y: +input.dataset.y, s });
+}
+$('text-input').onkeydown = (e) => {
+  if (e.key === 'Enter') commitText();
+  if (e.key === 'Escape') $('text-input').hidden = true;
+};
+$('text-input').onblur = commitText;
+
+for (const b of document.querySelectorAll('[data-tool]')) {
+  if (b.dataset.tool !== 'control') b.onclick = () => setTool(b.dataset.tool);
+}
+$('undo').onclick = () => mark({ t: 'undo' });
 $('clear').onclick = () => mark({ t: 'clear' });
 
 // --- remote mouse. Teacher asks; the student's desktop app asks the student and does the clicking. ---
@@ -211,11 +283,11 @@ $('mouse').onclick = () => {
     setTool(null);
     return sendData({ t: 'control-stop' });
   }
-  if (sendData({ t: 'control-request' })) $('mouse').textContent = 'Ждём ученика…';
+  if (sendData({ t: 'control-request' })) $('mouse').querySelector('span').textContent = 'Ждём ученика…';
 };
 
 function onControl({ on, reason }) {
-  $('mouse').textContent = 'Мышь';
+  $('mouse').querySelector('span').textContent = 'Управление';
   if (on) return tool !== 'control' && setTool('control');
   if (tool === 'control') setTool(null);
   const why = {
@@ -224,7 +296,7 @@ function onControl({ on, reason }) {
     denied: 'Ученик отклонил управление',
     revoked: 'Ученик отключил управление',
   }[reason];
-  if (why) status(why);
+  if (why) toast(why);
 }
 
 // Student side.
@@ -244,13 +316,19 @@ function releaseControl(tellTeacher) {
 $('release').onclick = () => releaseControl(true);
 window.huddle?.onControlOff?.(() => { $('release').hidden = true; sendData({ t: 'control', on: false, reason: 'revoked' }); });
 
+// --- chat ---
 function addMessage(text, mine, delivered = true) {
   const p = document.createElement('p');
   p.className = mine ? 'me' : '';
-  p.textContent = `${mine ? 'Вы' : 'Собеседник'}: ${text}${delivered ? '' : ' (не доставлено)'}`;
+  const who = document.createElement('b');
+  who.textContent = mine ? 'Вы' : 'Собеседник';
+  p.append(who, text + (delivered ? '' : ' (не доставлено)'));
   $('messages').append(p);
   p.scrollIntoView();
-  if (!mine) $('chat').hidden = false;
+  if (!mine && $('chat').hidden) {
+    $('unread').hidden = false;
+    toast(`Собеседник: ${text}`);
+  }
 }
 
 $('chat-form').onsubmit = (e) => {
@@ -260,6 +338,14 @@ $('chat-form').onsubmit = (e) => {
   addMessage(text, true, sendData({ t: 'chat', text }));
   $('chat-input').value = '';
 };
+function toggleChat() {
+  $('chat').hidden = !$('chat').hidden;
+  $('unread').hidden = true;
+  if (!$('chat').hidden) $('chat-input').focus();
+  fitInk();
+}
+$('chat-toggle').onclick = toggleChat;
+$('chat-close').onclick = toggleChat;
 
 // --- screen share ---
 function addScreen() {
@@ -276,10 +362,11 @@ function stopShare() {
   window.huddle?.shareEnded();
   $('release').hidden = true;
   $('share').classList.remove('on');
+  $('share').querySelector('span').textContent = 'Демонстрация';
   $('sharing').hidden = true;
 }
 
-$('share').onclick = async () => {
+async function toggleShare() {
   if (screenStream) return stopShare();
   try {
     screenStream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 15 } });
@@ -293,24 +380,74 @@ $('share').onclick = async () => {
   track.onended = stopShare;    // browser's own "Stop sharing" button
   if (pc) addScreen();
   $('share').classList.add('on');
+  $('share').querySelector('span').textContent = 'Остановить';
   $('sharing').hidden = false;
-};
+}
+$('share').onclick = toggleShare;
+$('stop-share').onclick = stopShare;
 
-// --- buttons ---
-function toggle(button, tracks) {
-  if (!tracks.length) return (button.disabled = true);
+// --- mic / camera ---
+function toggle(button, tracks, labels) {
+  const label = button.querySelector('span');
+  if (!tracks.length) {
+    button.disabled = true;
+    button.classList.add('off');
+    return;
+  }
   button.onclick = () => {
     const enabled = !tracks[0].enabled;
     tracks.forEach((t) => (t.enabled = enabled));
     button.classList.toggle('off', !enabled);
+    label.textContent = labels[enabled ? 0 : 1];
+    sendState();
+    render();
   };
 }
-toggle($('mic'), local.getAudioTracks());
-toggle($('cam'), local.getVideoTracks());
+toggle($('mic'), local.getAudioTracks(), ['Выкл. звук', 'Вкл. звук']);
+toggle($('cam'), local.getVideoTracks(), ['Остановить видео', 'Включить видео']);
 
-$('chat-toggle').onclick = () => ($('chat').hidden = !$('chat').hidden);
+// --- view: speaker / gallery, self view, fullscreen, leave ---
+$('view').onclick = () => {
+  const gallery = $('stage').classList.toggle('gallery');
+  $('view').querySelector('span').textContent = gallery ? 'Докладчик' : 'Галерея';
+};
+$('hide-self').onclick = () => { $('local-tile').hidden = true; $('show-self').hidden = false; };
+$('show-self').onclick = () => { $('local-tile').hidden = false; $('show-self').hidden = true; };
+
+// Drag my floating video around the stage (speaker view only).
+$('local-tile').onpointerdown = (e) => {
+  const tile = $('local-tile'), stage = $('stage');
+  if (e.target.id === 'hide-self' || getComputedStyle(tile).position !== 'absolute') return;
+  tile.setPointerCapture(e.pointerId);
+  const start = { x: e.clientX - tile.offsetLeft, y: e.clientY - tile.offsetTop };
+  tile.onpointermove = (m) => {
+    tile.style.left = Math.max(0, Math.min(stage.clientWidth - tile.offsetWidth, m.clientX - start.x)) + 'px';
+    tile.style.top = Math.max(0, Math.min(stage.clientHeight - tile.offsetHeight, m.clientY - start.y)) + 'px';
+    tile.style.right = 'auto';
+  };
+  tile.onpointerup = () => (tile.onpointermove = null);
+};
+
+$('fullscreen').onclick = () => {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen();
+};
+document.onfullscreenchange = () => {
+  $('fullscreen').querySelector('span').textContent = document.fullscreenElement ? 'Обычный экран' : 'Во весь экран';
+};
+
+$('leave').onclick = () => {
+  if (screenStream) stopShare();
+  stop();
+  ws.onclose = null;
+  ws.close();
+  local.getTracks().forEach((t) => t.stop());
+  document.body.innerHTML = '<div class="left-screen"><h2>Вы вышли из урока</h2><button onclick="location.reload()">Вернуться</button></div>';
+};
+
 $('copy').onclick = async () => {
   await navigator.clipboard.writeText(location.href);
-  $('copy').textContent = 'Скопировано';
-  setTimeout(() => ($('copy').textContent = 'Скопировать ссылку'), 1500);
+  toast('Ссылка скопирована — отправьте её ученику');
 };
+
+render();

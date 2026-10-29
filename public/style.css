@@ -3,38 +3,126 @@
 html, body { height: 100%; margin: 0; }
 body {
   display: grid;
-  grid-template: auto 1fr auto / 1fr auto;
+  grid-template: 1fr auto / 1fr auto;
   background: #111; color: #eee;
-  font: 15px system-ui, sans-serif;
+  font: 15px system-ui, -apple-system, "Segoe UI", sans-serif;
 }
-header, footer { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; padding: 8px 12px; }
-header { justify-content: space-between; }
-footer { justify-content: center; }
+button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; }
+svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
-button { background: #2a2a2a; color: inherit; border: 0; border-radius: 8px; padding: 10px 14px; font: inherit; cursor: pointer; }
-button:hover { background: #3a3a3a; }
-button.off { background: #8a2b2b; }
-button.on { background: #2b6a3a; }
+.pill { position: absolute; z-index: 4; padding: 5px 12px; border-radius: 999px; background: rgba(0, 0, 0, 0.6); font-size: 13px; }
+#status { top: 14px; left: 14px; }
+#show-self { top: 14px; right: 14px; }
+#sharing { top: 14px; left: 50%; transform: translateX(-50%); background: #2b8a3e; }
+#sharing button { margin-left: 8px; padding: 2px 10px; border-radius: 6px; background: #e02828; }
 
-#stage { grid-area: 2 / 1; position: relative; min-height: 0; overflow: hidden; }
-video { background: #000; border-radius: 10px; }
-#screen, #remote { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
-/* Remote camera shrinks to a corner while a screen is shown. */
-#stage.has-screen #remote { inset: auto; left: 12px; bottom: 12px; width: 220px; height: auto; aspect-ratio: 4/3; object-fit: cover; z-index: 1; }
-#local { position: absolute; right: 12px; bottom: 12px; width: 180px; aspect-ratio: 4/3; object-fit: cover; transform: scaleX(-1); z-index: 2; }
-#ink { position: absolute; pointer-events: none; z-index: 1; touch-action: none; }
+/* ---------- stage: speaker (default), gallery, screen share ---------- */
+#stage { grid-area: 1 / 1; position: relative; min-height: 0; display: grid; gap: 8px; padding: 8px; overflow: hidden; }
+#tiles { position: relative; min-height: 0; }
+.tile { position: relative; overflow: hidden; border-radius: 10px; background: #232323; }
+.tile video { width: 100%; height: 100%; object-fit: cover; display: block; }
+#remote { object-fit: contain; }
+#local { transform: scaleX(-1); }
+.tile.nocam video { visibility: hidden; }
+.placeholder { display: none; position: absolute; inset: 0; place-items: center; font-size: 22px; color: #bbb; }
+.tile.nocam .placeholder { display: grid; }
+.name { position: absolute; left: 8px; bottom: 8px; display: flex; gap: 4px; align-items: center; padding: 2px 8px; border-radius: 6px; background: rgba(0, 0, 0, 0.6); font-size: 13px; }
+.name svg { width: 14px; height: 14px; color: #ff453a; }
+#hide-self { position: absolute; top: 4px; right: 6px; font-size: 20px; line-height: 1; opacity: 0; transition: opacity 0.15s; }
+#local-tile:hover #hide-self { opacity: 1; }
+
+/* speaker: the other person fills the stage, my video floats and can be dragged */
+#remote-tile { position: absolute; inset: 0; }
+#local-tile { position: absolute; z-index: 3; top: 14px; right: 14px; width: 220px; aspect-ratio: 16 / 9; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5); cursor: grab; touch-action: none; }
+
+/* gallery: equal tiles side by side */
+#stage.gallery #tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-content: center; }
+#stage.gallery .tile { position: relative; inset: auto; width: auto; aspect-ratio: 16 / 9; box-shadow: none; cursor: default; }
+
+/* screen share: picture big, cameras in a strip on the right */
+#stage.has-screen { grid-template-columns: 1fr clamp(200px, 15vw, 360px); }
+#stage.has-screen #status { top: auto; bottom: 14px; } /* keep the top free for the annotation bar */
+#stage.has-screen #tiles { display: flex; flex-direction: column; gap: 8px; }
+#stage.has-screen .tile { position: relative; inset: auto; width: 100%; aspect-ratio: 16 / 9; box-shadow: none; cursor: default; }
+#stage.has-screen #remote { object-fit: cover; }
+
+#screen-wrap { position: relative; min-height: 0; overflow: hidden; border-radius: 10px; background: #000; container-type: size; }
+#screen { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+#ink { position: absolute; z-index: 1; pointer-events: none; touch-action: none; }
 #ink.active { pointer-events: auto; cursor: crosshair; }
-#tools { position: absolute; top: 12px; left: 12px; display: flex; gap: 6px; z-index: 2; }
-#sharing { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: #2b6a3a; padding: 6px 12px; border-radius: 8px; z-index: 2; }
+#ink.tool-control { cursor: default; }
+#ink.tool-eraser { cursor: cell; }
+#ink.tool-text { cursor: text; }
+#text-input { position: absolute; z-index: 3; min-width: 200px; padding: 4px 8px; border: 2px solid #0a84ff; border-radius: 6px; background: rgba(0, 0, 0, 0.75); color: #fff; font: 600 16px system-ui, sans-serif; }
 
-#chat { grid-area: 2 / 2; width: 300px; display: flex; flex-direction: column; border-left: 1px solid #222; }
-#messages { flex: 1; overflow-y: auto; padding: 10px; }
-#messages p { margin: 0 0 8px; overflow-wrap: anywhere; }
-#messages .me { color: #8fc; }
-#chat-input { width: 100%; padding: 10px; background: #1c1c1c; color: inherit; border: 0; border-top: 1px solid #222; font: inherit; }
+/* annotation bar over the shared screen */
+.bar { position: absolute; z-index: 2; top: 10px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 16px); overflow-x: auto; scrollbar-width: none; display: flex; align-items: center; gap: 2px; padding: 4px 6px; border-radius: 10px; background: rgba(30, 30, 30, 0.92); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5); }
+.bar button { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 64px; padding: 5px 6px; border-radius: 7px; font-size: 11px; color: #ddd; }
+.bar button svg { width: 20px; height: 20px; }
+.bar button:hover { background: #3a3a3a; }
+.bar button.on { background: #0e71eb; color: #fff; }
+#colors { display: flex; gap: 6px; padding: 0 8px; }
+/* narrow picture (small laptop, chat open, phone): icons only */
+@container (max-width: 760px) or (max-height: 400px) {
+  .bar button { min-width: 0; padding: 6px; }
+  .bar button span { display: none; }
+  #colors { padding: 0 4px; gap: 4px; }
+}
+#colors button { flex: none; min-width: 0; width: 20px; height: 20px; padding: 0; border-radius: 50%; border: 2px solid #555; }
+#colors button.on { outline: 2px solid #fff; outline-offset: 2px; background-clip: padding-box; }
 
+/* ---------- chat ---------- */
+#chat { grid-area: 1 / 2; width: clamp(300px, 20vw, 380px); display: flex; flex-direction: column; background: #1a1a1a; border-left: 1px solid #2a2a2a; }
+#chat header { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; font-weight: 600; border-bottom: 1px solid #2a2a2a; }
+#chat header button { font-size: 22px; line-height: 1; }
+#messages { flex: 1; overflow-y: auto; padding: 12px 14px; }
+#messages p { margin: 0 0 10px; overflow-wrap: anywhere; }
+#messages b { display: block; font-size: 12px; color: #999; font-weight: 500; }
+#messages .me b { color: #6fb3ff; }
+#chat-input { width: 100%; padding: 12px 14px; background: #222; color: inherit; border: 0; border-top: 1px solid #2a2a2a; font: inherit; }
+
+/* ---------- bottom toolbar ---------- */
+#toolbar { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; background: #1a1a1a; }
+.group { display: flex; align-items: center; gap: 4px; }
+.tb { position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 76px; padding: 6px 8px; border-radius: 8px; font-size: 12px; color: #ddd; }
+.tb:hover { background: #2c2c2c; }
+.tb:disabled { opacity: 0.4; cursor: default; }
+.slash { display: none; }
+.tb.off svg { color: #ff453a; }
+.tb.off .slash { display: inline; }
+.tb.share svg { color: #34c759; }
+.tb.share.on svg { color: #ff453a; }
+.tb.danger { color: #ff6b6b; }
+#unread { position: absolute; top: 4px; right: 22px; width: 9px; height: 9px; border-radius: 50%; background: #ff453a; }
+.leave { padding: 9px 18px; border-radius: 8px; background: #e02828; color: #fff; font-weight: 600; }
+.leave:hover { background: #c41f1f; }
+
+#toast { position: fixed; z-index: 10; left: 50%; bottom: 90px; transform: translateX(-50%); padding: 10px 16px; border-radius: 8px; background: #333; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5); }
+
+.left-screen { grid-column: 1 / -1; grid-row: 1 / -1; display: grid; place-content: center; gap: 16px; text-align: center; }
+.left-screen button { padding: 10px 18px; border-radius: 8px; background: #0e71eb; }
+
+/* small laptops / tablets: cameras go under the shared screen, chat floats over the stage */
+@media (max-width: 1100px) {
+  #stage.has-screen { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) clamp(80px, 16vh, 140px); }
+  #stage.has-screen #tiles { flex-direction: row; justify-content: center; overflow: hidden; }
+  #stage.has-screen .tile { width: auto; height: 100%; }
+}
+@media (max-width: 900px) {
+  #chat { position: fixed; z-index: 5; top: 0; right: 0; bottom: 64px; width: min(340px, 100%); box-shadow: -4px 0 16px rgba(0, 0, 0, 0.5); }
+}
 @media (max-width: 700px) {
-  #chat { position: fixed; inset: 0 0 56px 0; width: auto; background: #111; z-index: 3; }
-  #local { width: 110px; }
-  #stage.has-screen #remote { width: 130px; }
+  .tb { min-width: 0; padding: 6px; }
+  .tb span { display: none; }
+  #toolbar { padding: 6px; }
+  .leave { padding: 9px 12px; }
+  #local-tile { width: 110px; }
+  #stage { padding: 4px; gap: 4px; }
+  #stage.gallery #tiles { grid-template-columns: 1fr; }
+  #chat { width: 100%; }
+}
+/* very short windows (landscape phone, small laptop with big zoom) */
+@media (max-height: 500px) {
+  .tb span { display: none; }
+  .tb { padding: 4px 6px; }
 }
