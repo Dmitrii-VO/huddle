@@ -140,14 +140,15 @@ async function applyClick(m) {
   const p = toPoint(m.x, m.y);
   if (inside(p, bar?.getBounds())) return; // never press my own bar ("Остановить")
   input ??= require('./input');
-  if (!(await input.inFront())) return flash('Нажатие ученика не прошло: на экране не показ PowerPoint');
-  if (!shareState.clicks || !sharedDisplay) return; // switched off while we looked
   if (shareState.tool) {
     // ponytail: timed pass-through while I'm drawing; races if the OS delivers the click later than 300 ms
     overlay?.setIgnoreMouseEvents(true);
     setTimeout(() => overlay?.setIgnoreMouseEvents(!shareState.tool), 300);
   }
-  input.click(toOS(p), toOS(screen.getCursorScreenPoint())); // my cursor jumps there and straight back
+  const to = toOS(p);
+  if (!(await input.accepts(to))) return flash('Нажатие ученика не прошло: на экране не показ PowerPoint');
+  if (!shareState.clicks || !sharedDisplay) return; // switched off while we looked
+  input.click(to, toOS(screen.getCursorScreenPoint())); // my cursor jumps there and straight back
   overlay?.webContents.send('ink', { t: 'ptr', x: m.x, y: m.y }); // I see where the child tapped
 }
 
@@ -206,6 +207,7 @@ app.whenReady().then(() => {
     }
   });
   ipcMain.on('click', (e, m) => fromWin(e) && applyClick(m));
+  ipcMain.on('clicks-off', (e) => fromWin(e) && setClicks(false));
 
   ipcMain.on('version', (e) => (e.returnValue = app.getVersion()));
   createWindow();

@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('huddle', {
   shareEnded: () => ipcRenderer.send('share-ended'),
   click: (msg) => ipcRenderer.send('click', msg),
   onClicks: on('clicks'),
+  clicksOff: () => ipcRenderer.send('clicks-off'),
   appLogs: () => ipcRenderer.invoke('app-logs'),
   onAppLog: on('app-log'),
   barState: (s) => ipcRenderer.send('bar-state', s),

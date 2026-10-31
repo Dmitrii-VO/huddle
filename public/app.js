@@ -103,7 +103,6 @@ function start() {
     sendData({ t: 'cam', id: local.id });
     sendState();
     if (screenStream) sendData({ t: 'screen', id: screenStream.id });
-    if (clicksOn) sendData({ t: 'clicks', on: true });
   };
 
   pc.onnegotiationneeded = negotiate;
@@ -152,6 +151,7 @@ function stop() {
   remoteState = { mic: true, cam: true };
   window.huddle?.ink({ t: 'clear' });
   setClicks(false);
+  window.huddle?.clicksOff?.(); // the switch was for that child: whoever joins next needs the teacher to switch it on again
   render();
 }
 
@@ -205,9 +205,7 @@ window.huddle?.onBarAction?.((a) => {
 window.huddle?.onInkOut?.((m) => sendData(m));
 const reportMic = () => window.huddle?.barState?.({ mic: !!local.getAudioTracks()[0]?.enabled });
 // The teacher's "Ученик нажимает" switch on the bar (main.js keeps the real state and does the clicking).
-let clicksOn = false;
 window.huddle?.onClicks?.((on) => {
-  clicksOn = on;
   log({ ev: 'clicks', on });
   sendData({ t: 'clicks', on });
 });
