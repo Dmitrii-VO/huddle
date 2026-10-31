@@ -21,6 +21,7 @@
   <div class="bar">
     <span class="live">● Демонстрация</span>
     <button data-a="mic" id="mic">Звук вкл.</button>
+    <button data-a="clicks" title="Нажатия ученика доходят до показа PowerPoint. Показ — в обычном режиме, не «Режим докладчика»">Ученик нажимает</button>
     <button data-a="pen">Рисовать</button>
     <button data-a="pointer">Указка</button>
     <button data-a="eraser">Ластик</button>
@@ -44,7 +45,7 @@
     };
     window.huddle.onState((s) => {
       for (const b of document.querySelectorAll('[data-a]')) {
-        b.classList.toggle('on', b.dataset.a === s.tool || b.dataset.a === 'color:' + s.color);
+        b.classList.toggle('on', b.dataset.a === s.tool || b.dataset.a === 'color:' + s.color || (b.dataset.a === 'clicks' && s.clicks));
       }
       const mic = document.getElementById('mic');
       mic.classList.toggle('off', !s.mic);

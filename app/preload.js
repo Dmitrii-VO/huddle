@@ -7,10 +7,8 @@ contextBridge.exposeInMainWorld('huddle', {
   // page
   ink: (msg) => ipcRenderer.send('ink', msg),
   shareEnded: () => ipcRenderer.send('share-ended'),
-  requestControl: () => ipcRenderer.invoke('control-request'),
-  stopControl: () => ipcRenderer.send('control-stop'),
-  input: (msg) => ipcRenderer.send('input', msg),
-  onControlOff: on('control-off'),
+  click: (msg) => ipcRenderer.send('click', msg),
+  onClicks: on('clicks'),
   appLogs: () => ipcRenderer.invoke('app-logs'),
   onAppLog: on('app-log'),
   barState: (s) => ipcRenderer.send('bar-state', s),

@@ -1,18 +1,26 @@
-// Viewer's tools over the other side's shared screen (annotations, remote control with keyboard)
-// and the sharer's answer to a control request.
+// Viewer's tools over the other side's shared screen: annotations, and taps that the sharer's desktop app
+// clicks into their PowerPoint slide show once the sharer allows it.
 import { COLORS, createInk } from '/ink.js';
 
 const $ = (id) => document.getElementById(id);
 
-export function createTools({ sendData, toast, isSharing }) {
+export function createTools({ sendData, toast }) {
   const ink = createInk($('ink'));
   let tool = null, color = 0, current = null; // current: id + start point of the stroke/arrow being drawn
+  let clicks = false; // the sharer lets my taps through (only when no tool is picked)
 
   function setTool(name) {
     tool = tool === name ? null : name;
     for (const b of document.querySelectorAll('[data-tool]')) b.classList.toggle('on', b.dataset.tool === tool);
-    $('ink').className = tool ? `active tool-${tool}` : '';
+    $('ink').className = tool ? `active tool-${tool}` : clicks ? 'clicks' : '';
     $('text-input').hidden = true;
+  }
+
+  function setClicks(on) {
+    if (clicks === on) return;
+    clicks = on;
+    if (!tool) setTool(null);
+    toast(on ? 'Можно нажимать на картинки в презентации' : 'Нажимать на презентацию больше нельзя');
   }
 
   COLORS.forEach((c, i) => {
@@ -47,37 +55,30 @@ export function createTools({ sendData, toast, isSharing }) {
   }
   const clamp = (v) => Math.min(1, Math.max(0, v));
   const at = (e) => ({ x: clamp(e.offsetX / $('ink').clientWidth), y: clamp(e.offsetY / $('ink').clientHeight) });
-  const mouseButton = (e) => (e.button === 2 ? 'right' : 'left');
   const newId = () => Math.random().toString(36).slice(2);
 
   $('ink').onpointerdown = (e) => {
     const p = at(e);
+    if (!tool) {
+      // tap right away (not on release) and show it at once: the slide answers only after a video round trip
+      if (clicks && e.button === 0 && sendData({ t: 'click', ...p })) ink.apply({ t: 'ptr', ...p });
+      return;
+    }
     if (tool === 'text') return startText(e, p);
     $('ink').setPointerCapture(e.pointerId);
-    if (tool === 'control') return sendData({ t: 'mouse', a: 'down', b: mouseButton(e), ...p });
     if (tool === 'eraser') return erase(p);
     current = { id: newId(), ...p };
     if (tool === 'pen') mark({ t: 'line', id: current.id, c: color, ...p });
   };
   $('ink').onpointermove = (e) => {
     const p = at(e);
-    if (tool === 'control') sendData({ t: 'mouse', a: 'move', ...p });
     if (tool === 'pointer') mark({ t: 'ptr', ...p });
     if (tool === 'eraser' && e.buttons) erase(p);
     if (!current) return;
     if (tool === 'pen') mark({ t: 'line', id: current.id, c: color, ...p });
     if (tool === 'arrow') mark({ t: 'arrow', id: current.id, c: color, x1: current.x, y1: current.y, x2: p.x, y2: p.y });
   };
-  $('ink').onpointerup = (e) => {
-    if (tool === 'control') sendData({ t: 'mouse', a: 'up', b: mouseButton(e), ...at(e) });
-    current = null;
-  };
-  $('ink').addEventListener('wheel', (e) => {
-    if (tool !== 'control') return;
-    e.preventDefault();
-    sendData({ t: 'mouse', a: 'wheel', dy: e.deltaY, ...at(e) });
-  }, { passive: false });
-  $('ink').oncontextmenu = (e) => tool === 'control' && e.preventDefault();
+  $('ink').onpointerup = () => (current = null);
   $('ink').onpointerleave = () => tool === 'pointer' && mark({ t: 'ptr', x: null, y: null });
 
   function erase(p) {
@@ -110,68 +111,9 @@ export function createTools({ sendData, toast, isSharing }) {
   };
   $('text-input').onblur = commitText;
 
-  for (const b of document.querySelectorAll('[data-tool]')) {
-    if (b.dataset.tool !== 'control') b.onclick = () => setTool(b.dataset.tool);
-  }
+  for (const b of document.querySelectorAll('[data-tool]')) b.onclick = () => setTool(b.dataset.tool);
   $('undo').onclick = () => mark({ t: 'undo' });
   $('clear').onclick = () => mark({ t: 'clear' });
 
-  // --- remote control. The viewer asks; the sharer's desktop app asks its user and does the clicking. ---
-  $('mouse').onclick = () => {
-    if (tool === 'control') {
-      setTool(null);
-      return sendData({ t: 'control-stop' });
-    }
-    if (sendData({ t: 'control-request' })) $('mouse').querySelector('span').textContent = 'Ждём ответа…';
-  };
-
-  function onControl({ on, reason }) {
-    $('mouse').querySelector('span').textContent = 'Управление';
-    if (on) {
-      document.activeElement?.blur(); // keys are for the other computer now, not for our buttons
-      return tool !== 'control' && setTool('control');
-    }
-    if (tool === 'control') setTool(null);
-    const why = {
-      noapp: 'Управление работает, только если собеседник зашёл через приложение Huddle',
-      noshare: 'Сначала собеседник должен начать демонстрацию',
-      denied: 'Собеседник отклонил управление',
-      revoked: 'Собеседник отключил управление',
-    }[reason];
-    if (why) toast(why);
-  }
-
-  // The side that shares the screen.
-  async function answerControl() {
-    if (!window.huddle?.requestControl) return sendData({ t: 'control', on: false, reason: 'noapp' });
-    if (!isSharing()) return sendData({ t: 'control', on: false, reason: 'noshare' });
-    const on = await window.huddle.requestControl();
-    $('release').hidden = !on;
-    sendData({ t: 'control', on, reason: on ? undefined : 'denied' });
-  }
-
-  function releaseControl(tellTeacher) {
-    window.huddle?.stopControl?.();
-    $('release').hidden = true;
-    if (tellTeacher) sendData({ t: 'control', on: false, reason: 'revoked' });
-  }
-  $('release').onclick = () => releaseControl(true);
-
-  // Keyboard goes to the other computer while controlling it (arrows / space flip slides, letters type).
-  const KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', 'Delete', 'Enter', 'Backspace', 'Tab', 'Escape', ' ']);
-  addEventListener('keydown', (e) => {
-    if (tool !== 'control' || e.target.closest('input, textarea')) return;
-    if (e.ctrlKey || e.metaKey || e.altKey) return; // ponytail: no shortcuts (Ctrl+C, Cmd+Tab…) yet
-    if (KEYS.has(e.key)) sendData({ t: 'mouse', a: 'key', k: e.key });
-    else if ([...e.key].length === 1) sendData({ t: 'mouse', a: 'type', s: e.key });
-    else return;
-    e.preventDefault();
-  });
-  addEventListener('keyup', (e) => {
-    if (tool !== 'control' || !KEYS.has(e.key) || e.target.closest('input, textarea')) return;
-    e.preventDefault(); // Space on a focused button would "click" it on keyup
-    sendData({ t: 'mouse', a: 'keyup', k: e.key });
-  });
-
-  return { ink, setTool, fitInk, onControl, answerControl, releaseControl };
+  return { ink, setTool, fitInk, setClicks };
 }

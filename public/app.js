@@ -103,6 +103,7 @@ function start() {
     sendData({ t: 'cam', id: local.id });
     sendState();
     if (screenStream) sendData({ t: 'screen', id: screenStream.id });
+    if (clicksOn) sendData({ t: 'clicks', on: true });
   };
 
   pc.onnegotiationneeded = negotiate;
@@ -150,7 +151,7 @@ function stop() {
   remoteCamId = remoteScreenId = null;
   remoteState = { mic: true, cam: true };
   window.huddle?.ink({ t: 'clear' });
-  releaseControl(false);
+  setClicks(false);
   render();
 }
 
@@ -164,7 +165,7 @@ function render() {
   $('remote-tile').classList.toggle('nocam', !cam?.getVideoTracks().length || !remoteState.cam);
   $('remote-tile').querySelector('.muted').toggleAttribute('hidden', remoteState.mic); // <svg> has no .hidden property
   $('local-tile').classList.toggle('nocam', !local.getVideoTracks()[0]?.enabled);
-  if (!screen) { setTool(null); ink.apply({ t: 'clear' }); }
+  if (!screen) { setTool(null); setClicks(false); ink.apply({ t: 'clear' }); }
   fitInk();
 }
 
@@ -188,16 +189,13 @@ function onData(msg) {
   if (msg.t === 'chat') addMessage(msg.text, false);
   // Marks: over my real screen if I'm the one sharing (desktop app only), else over the picture I'm watching.
   if (isInk(msg)) return screenStream ? window.huddle?.ink(msg) : ink.apply(msg);
-  if (msg.t === 'mouse') return window.huddle?.input(msg);
-  if (msg.t.startsWith('control')) log({ ev: 'control', got: msg });
-  if (msg.t === 'control-request') return answerControl();
-  if (msg.t === 'control-stop') return releaseControl(false);
-  if (msg.t === 'control') return onControl(msg);
+  if (msg.t === 'click') return screenStream && window.huddle?.click(msg);
+  if (msg.t === 'clicks') return setClicks(!!msg.on);
   render();
 }
 
-// --- annotation + remote control tools (tools.js) ---
-const { ink, setTool, fitInk, onControl, answerControl, releaseControl } = createTools({ sendData, toast, isSharing: () => !!screenStream });
+// --- annotation tools and the child's taps (tools.js) ---
+const { ink, setTool, fitInk, setClicks } = createTools({ sendData, toast });
 
 // Desktop app while I share: the floating bar's buttons and my own marks.
 window.huddle?.onBarAction?.((a) => {
@@ -206,7 +204,13 @@ window.huddle?.onBarAction?.((a) => {
 });
 window.huddle?.onInkOut?.((m) => sendData(m));
 const reportMic = () => window.huddle?.barState?.({ mic: !!local.getAudioTracks()[0]?.enabled });
-window.huddle?.onControlOff?.(() => { $('release').hidden = true; sendData({ t: 'control', on: false, reason: 'revoked' }); });
+// The teacher's "Ученик нажимает" switch on the bar (main.js keeps the real state and does the clicking).
+let clicksOn = false;
+window.huddle?.onClicks?.((on) => {
+  clicksOn = on;
+  log({ ev: 'clicks', on });
+  sendData({ t: 'clicks', on });
+});
 
 // --- chat ---
 function addMessage(text, mine, delivered = true) {
@@ -317,7 +321,6 @@ function stopShare() {
   sendData({ t: 'screen', id: null });
   log({ ev: 'share', on: false });
   window.huddle?.shareEnded();
-  $('release').hidden = true;
   $('share').classList.remove('on');
   $('share').querySelector('span').textContent = 'Демонстрация';
   $('sharing').hidden = true;

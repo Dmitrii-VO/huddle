@@ -1,7 +1,7 @@
 // Huddle desktop app: the website in a window, plus what a browser can't do while sharing the screen —
 // a click-through overlay for annotations, a floating control bar over full-screen slides,
-// and letting the other side drive mouse and keyboard after the user agrees.
-const { app, BrowserWindow, desktopCapturer, globalShortcut, ipcMain, nativeTheme, screen, session, shell, systemPreferences } = require('electron');
+// and the other side's taps landing on my PowerPoint slides when I switch that on.
+const { app, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, screen, session, shell, systemPreferences } = require('electron');
 const path = require('node:path');
 const os = require('node:os');
 const initUpdates = require('./updater');
@@ -10,19 +10,13 @@ const recent = require('./recent');
 
 const SITE = process.env.HUDDLE_URL || 'https://huddle.runterra.ru';
 const preload = path.join(__dirname, 'preload.js');
-const STOP_KEY = 'CommandOrControl+Alt+X';
-const STOP_LABEL = process.platform === 'darwin' ? '⌘⌥X' : 'Ctrl+Alt+X';
 const isMac = process.platform === 'darwin';
-const KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', 'Delete', 'Enter', 'Backspace', 'Tab', 'Escape', ' ']);
 
 let win = null, overlay = null, bar = null;
 let sharedDisplay = null; // set while the screen is shared
-let control = false;      // consent lives here, never in the (remote) page
-let consentGen = 0;       // bumped on navigation / share end: a pending "Разрешить" must not outlive them
 let input = null;         // native module, loaded on first use
-const held = new Set();   // synthetic mouse buttons currently down
-const heldKeys = new Set();
-const shareState = { tool: null, color: 0, mic: true }; // my own annotation tool while I share
+// my own annotation tool while I share; clicks: the other side may tap my slides (lives here, never in the remote page)
+const shareState = { tool: null, color: 0, mic: true, clicks: false };
 
 // App events for the server journal: buffered until the page joins a lesson (it has the socket).
 const appLogs = [];
@@ -41,8 +35,7 @@ function createWindow() {
     if (!url.startsWith(SITE + '/') && !url.startsWith('file:')) e.preventDefault();
   });
   win.webContents.on('did-navigate', (_e, url) => {
-    consentGen++;
-    setControl(false);
+    setClicks(false);
     const code = url.startsWith(SITE + '/r/') && url.slice(SITE.length + 3).split(/[?#]/)[0];
     if (code) recent.visit(code);
   });
@@ -75,7 +68,7 @@ function showOverlay(display) {
 // Zoom-like control bar at the top of the shared screen: mic, pen, pointer, stop.
 function showBar(display) {
   bar?.destroy();
-  const wa = display.workArea, width = Math.min(880, wa.width - 16), height = 56;
+  const wa = display.workArea, width = Math.min(1000, wa.width - 16), height = 56;
   bar = floating({ x: Math.round(wa.x + (wa.width - width) / 2), y: wa.y + 6, width, height, focusable: false });
   bar.setAlwaysOnTop(true, 'screen-saver', 1); // above the overlay
   bar.loadFile(path.join(__dirname, 'bar.html'));
@@ -95,93 +88,67 @@ function setShareTool(tool) {
 }
 
 function endShare() {
-  consentGen++;
-  setControl(false);
+  setClicks(false);
   sharedDisplay = null;
   shareState.tool = null;
   overlay?.destroy();
   bar?.destroy();
 }
 
-function setControl(on) {
-  if (control === on) return;
-  control = on;
-  if (on) {
-    setShareTool(null); // remote clicks must reach the apps, not my drawing layer
-    globalShortcut.register(STOP_KEY, () => {
-      setControl(false);
-      win?.webContents.send('control-off');
-    });
-  } else {
-    globalShortcut.unregister(STOP_KEY);
-    for (const b of held) input.button(b, false); // don't leave a drag or a key hanging
-    for (const k of heldKeys) input.key(k, false);
-    held.clear();
-    heldKeys.clear();
-  }
-  overlay?.webContents.send('banner', on ? `Компьютером управляет собеседник · ${STOP_LABEL} — отключить` : '');
-}
-
-// Normalized (0..1) point on the shared display -> what the OS input API expects.
-function toScreen(x, y) {
-  const b = sharedDisplay.bounds;
-  const p = { x: Math.round(b.x + x * b.width), y: Math.round(b.y + y * b.height) };
-  return isMac ? p : screen.dipToScreenPoint(p); // Windows SetCursorPos takes physical pixels
-}
-
-// One consent question at a time; after "Отклонить" repeats are refused for a while (no prompt spam).
-let pendingControl = null, deniedUntil = 0;
-function requestControl() {
-  if (Date.now() < deniedUntil) return Promise.resolve(false);
-  pendingControl ??= askControl().finally(() => (pendingControl = null));
-  return pendingControl;
-}
-
-async function askControl() {
-  if (!sharedDisplay) return false;
-  const gen = consentGen;
-  if (isMac && !systemPreferences.isTrustedAccessibilityClient(true)) {
+// The teacher's switch on the bar: the child may tap the slides (PowerPoint triggers). Only single left clicks,
+// only on the shared display, only while the PowerPoint slide show is in front — see applyClick.
+async function setClicks(on) {
+  if (on && isMac && !systemPreferences.isTrustedAccessibilityClient(true)) {
     await ask({
-      parent: win, onTop: true, kind: 'warn',
-      title: 'Разрешите Huddle управление компьютером',
+      parent: win, onTop: true, kind: 'warn', // onTop: a window-attached dialog would hide behind the slides
+      title: 'Разрешите Huddle нажимать за ученика',
       detail: 'Системные настройки → Конфиденциальность и безопасность → Универсальный доступ: включите Huddle, затем закройте и снова откройте приложение.',
       buttons: ['Понятно'],
     });
-    return false;
+    on = false;
   }
-  // onTop: during a full-screen slideshow a window-attached dialog would hide behind the slides
-  const response = process.env.HUDDLE_TEST_ALLOW_CONTROL
-    ? 0
-    : await ask({
-        parent: win, onTop: true, kind: 'ask', safe: true,
-        title: 'Собеседник просит управление компьютером',
-        detail: `Он сможет двигать мышь, нажимать и печатать. Отключить можно в любой момент: ${STOP_LABEL}, кнопка в окне Huddle или остановка демонстрации.`,
-        buttons: ['Разрешить', 'Отклонить'],
-      });
-  if (response !== 0) deniedUntil = Date.now() + 15_000;
-  setControl(response === 0 && !!sharedDisplay && gen === consentGen);
-  return control;
+  on = on && !!sharedDisplay;
+  if (shareState.clicks === on) return;
+  shareState.clicks = on;
+  pushBar();
+  win?.webContents.send('clicks', on);
+}
+
+// Normalized (0..1) point on the shared display -> screen point (DIP) -> what the OS input API expects.
+function toPoint(x, y) {
+  const b = sharedDisplay.bounds;
+  return { x: Math.round(b.x + x * b.width), y: Math.round(b.y + y * b.height) };
+}
+const toOS = (p) => (isMac ? p : screen.dipToScreenPoint(p)); // Windows SetCursorPos takes physical pixels
+const inside = (p, r) => r && p.x >= r.x && p.x < r.x + r.width && p.y >= r.y && p.y < r.y + r.height;
+
+let bannerTimer;
+function flash(text) {
+  overlay?.webContents.send('banner', text);
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(() => overlay?.webContents.send('banner', ''), 3000);
 }
 
 const unit = (v) => typeof v === 'number' && v >= 0 && v <= 1;
+let lastClick = 0;
 
-function applyInput(m) {
-  if (!control || !sharedDisplay || !m) return;
+async function applyClick(m) {
+  if (!shareState.clicks || !sharedDisplay || !unit(m?.x) || !unit(m?.y)) return;
+  const now = Date.now();
+  if (now - lastClick < 150) return; // a child hammering the screen
+  lastClick = now;
+  const p = toPoint(m.x, m.y);
+  if (inside(p, bar?.getBounds())) return; // never press my own bar ("Остановить")
   input ??= require('./input');
-  if ((m.a === 'key' || m.a === 'keyup') && KEYS.has(m.k)) {
-    input.key(m.k, m.a === 'key');
-    m.a === 'key' ? heldKeys.add(m.k) : heldKeys.delete(m.k);
-    return;
+  if (!(await input.inFront())) return flash('Нажатие ученика не прошло: на экране не показ PowerPoint');
+  if (!shareState.clicks || !sharedDisplay) return; // switched off while we looked
+  if (shareState.tool) {
+    // ponytail: timed pass-through while I'm drawing; races if the OS delivers the click later than 300 ms
+    overlay?.setIgnoreMouseEvents(true);
+    setTimeout(() => overlay?.setIgnoreMouseEvents(!shareState.tool), 300);
   }
-  if (m.a === 'type' && typeof m.s === 'string' && [...m.s].length === 1) return input.type(m.s);
-  if (!unit(m.x) || !unit(m.y)) return;
-  const p = toScreen(m.x, m.y);
-  input.move(p.x, p.y);
-  if ((m.a === 'down' || m.a === 'up') && (m.b === 'left' || m.b === 'right')) {
-    input.button(m.b, m.a === 'down');
-    m.a === 'down' ? held.add(m.b) : held.delete(m.b);
-  }
-  if (m.a === 'wheel' && Number.isFinite(m.dy)) input.wheel(Math.max(-1000, Math.min(1000, m.dy)));
+  input.click(toOS(p), toOS(screen.getCursorScreenPoint())); // my cursor jumps there and straight back
+  overlay?.webContents.send('ink', { t: 'ptr', x: m.x, y: m.y }); // I see where the child tapped
 }
 
 app.whenReady().then(() => {
@@ -227,6 +194,7 @@ app.whenReady().then(() => {
   });
   ipcMain.on('bar', (e, action) => {
     if (!fromBar(e)) return;
+    if (action === 'clicks') return setClicks(!shareState.clicks);
     if (action === 'mic' || action === 'stop') return win?.webContents.send('bar-action', action);
     if (['pen', 'pointer', 'eraser'].includes(action)) return setShareTool(shareState.tool === action ? null : action);
     if (action === 'undo' || action === 'clear') return overlay?.webContents.send('cmd', action);
@@ -237,9 +205,7 @@ app.whenReady().then(() => {
       setShareTool(shareState.tool);
     }
   });
-  ipcMain.handle('control-request', (e) => (fromWin(e) ? requestControl() : false));
-  ipcMain.on('control-stop', (e) => fromWin(e) && setControl(false));
-  ipcMain.on('input', (e, m) => fromWin(e) && applyInput(m));
+  ipcMain.on('click', (e, m) => fromWin(e) && applyClick(m));
 
   ipcMain.on('version', (e) => (e.returnValue = app.getVersion()));
   createWindow();
@@ -250,8 +216,7 @@ app.whenReady().then(() => {
   ipcMain.on('recent-rename', (e, code, name) => fromStart(e) && recent.rename(code, name));
   ipcMain.on('recent-remove', (e, code) => fromStart(e) && recent.remove(code));
   appLog({ start: app.getVersion(), os: `${process.platform} ${os.release()} ${process.arch}`, packaged: app.isPackaged });
-  initUpdates({ getWin: () => win, isBusy: () => !!sharedDisplay || control, site: SITE, log: appLog, ask });
+  initUpdates({ getWin: () => win, isBusy: () => !!sharedDisplay, site: SITE, log: appLog, ask });
 });
 
-app.on('will-quit', () => globalShortcut.unregisterAll());
 app.on('window-all-closed', () => app.quit());
