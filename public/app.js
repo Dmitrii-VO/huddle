@@ -108,9 +108,11 @@ function usePeerCodec() {
 }
 ws.onclose = (e) => {
   if (e.code === 4001) return status('В комнате уже двое');
-  // Still waiting alone: nothing to lose, so come back by ourselves. In a call, a reload would cut the media.
-  if (!pc && e.code !== 4000) { status('Нет связи с сервером, переподключаемся…'); return setTimeout(() => location.reload(), 3000); }
-  status('Нет связи с сервером — обновите страницу');
+  if (e.code === 4000) return status('Нет связи с сервером — обновите страницу');
+  // The server has told the other side we left, so the call is over either way: rejoin once it answers again.
+  status('Нет связи с сервером, переподключаемся…');
+  const retry = () => fetch('/config', { cache: 'no-store' }).then(() => location.reload(), () => setTimeout(retry, 3000));
+  setTimeout(retry, 1000);
 };
 
 // "Perfect negotiation" (MDN): both sides may offer; the polite one yields on collision.
