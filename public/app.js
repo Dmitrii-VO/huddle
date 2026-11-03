@@ -71,7 +71,12 @@ ws.onmessage = ({ data }) => {
   }
 };
 let signals = Promise.resolve();
-ws.onclose = (e) => status(e.code === 4001 ? 'В комнате уже двое' : 'Нет связи с сервером — обновите страницу');
+ws.onclose = (e) => {
+  if (e.code === 4001) return status('В комнате уже двое');
+  // Still waiting alone: nothing to lose, so come back by ourselves. In a call, a reload would cut the media.
+  if (!pc && e.code !== 4000) { status('Нет связи с сервером, переподключаемся…'); return setTimeout(() => location.reload(), 3000); }
+  status('Нет связи с сервером — обновите страницу');
+};
 
 // "Perfect negotiation" (MDN): both sides may offer; the polite one yields on collision.
 async function onSignal({ description, candidate }) {
@@ -405,6 +410,7 @@ $('leave').onclick = () => {
   if (screenStream) stopShare();
   stop();
   ws.onclose = null;
+  ws.onclose = null; // leaving on purpose: no auto-reconnect
   ws.close();
   local.getTracks().forEach((t) => t.stop());
   document.body.innerHTML = '<div class="left-screen"><h2>Вы вышли из урока</h2><button onclick="location.reload()">Вернуться</button></div>';

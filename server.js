@@ -49,17 +49,19 @@ const server = http.createServer((req, res) => {
 const rooms = new Map(); // code -> Set<ws>
 
 const wss = new WebSocketServer({ server, maxPayload: 64 * 1024 });
-// A peer that lost its network never sends close: drop it after a missed pong, or it holds the room for ~15 min.
+// A peer that lost its network never sends close: drop it after ~1 min without a pong, or it holds the room
+// for ~15 min. Not sooner: a backgrounded phone tab or a throttled window can go quiet for a while and come back.
 setInterval(() => {
   for (const ws of wss.clients) {
-    if (!ws.alive) ws.terminate();
-    else { ws.alive = false; ws.ping(); }
+    if (ws.missed >= 4) { console.log(ws.tag ?? '-', 'no pong for 60 s, dropping'); ws.terminate(); continue; }
+    ws.missed++;
+    ws.ping();
   }
 }, 15_000);
 
 wss.on('connection', (ws, req) => {
-  ws.alive = true;
-  ws.on('pong', () => (ws.alive = true));
+  ws.missed = 0;
+  ws.on('pong', () => (ws.missed = 0));
   ws.on('error', () => ws.terminate()); // bad frames must not crash the process
   const code = URL.parse(req.url, 'http://x')?.searchParams.get('room');
   if (!code || !/^[\w-]{4,32}$/.test(code)) return ws.close(4000, 'bad room');
@@ -73,7 +75,7 @@ wss.on('connection', (ws, req) => {
   peer?.send(JSON.stringify({ type: 'peer-joined' }));
 
   // Diagnostics go to the journal (journalctl -u huddle), tagged "room/peer", never to the other side.
-  const tag = `${code.slice(0, 6)}/${crypto.randomBytes(2).toString('hex')}`;
+  const tag = (ws.tag = `${code.slice(0, 6)}/${crypto.randomBytes(2).toString('hex')}`);
   let budget = 30; // lines per minute: enough for stats every 10 s plus events, not enough to flood the disk
   const refill = setInterval(() => (budget = 30), 60_000);
   console.log(tag, 'connected', room.size === 2 ? '(second)' : '(first)');
