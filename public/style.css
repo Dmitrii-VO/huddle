@@ -120,6 +120,7 @@ a.tb { text-decoration: none; }
 
 .left-screen { grid-column: 1 / -1; grid-row: 1 / -1; display: grid; place-content: center; gap: 16px; text-align: center; }
 .left-screen button { padding: 10px 18px; border-radius: 8px; background: #0e71eb; }
+.left-screen button.quiet { background: #2c2c2c; }
 
 /* small laptops / tablets: cameras go under the shared screen, chat floats over the stage */
 @media (max-width: 1100px) {

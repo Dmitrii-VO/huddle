@@ -4,7 +4,7 @@ import { COLORS, createInk } from '/ink.js';
 
 const $ = (id) => document.getElementById(id);
 
-export function createTools({ sendData, toast }) {
+export function createTools({ sendData, toast, log }) {
   const ink = createInk($('ink'));
   let tool = null, color = 0, current = null; // current: id + start point of the stroke/arrow being drawn
   let clicks = false; // the sharer lets my taps through (only when no tool is picked)
@@ -61,7 +61,10 @@ export function createTools({ sendData, toast }) {
     const p = at(e);
     if (!tool) {
       // tap right away (not on release) and show it at once: the slide answers only after a video round trip
-      if (clicks && e.button === 0 && sendData({ t: 'click', ...p })) ink.apply({ t: 'ptr', ...p });
+      if (!clicks) return;
+      const sent = e.button === 0 && sendData({ t: 'click', ...p });
+      log({ ev: 'tap', sent, button: e.button }); // the teacher's side logs what became of it
+      if (sent) ink.apply({ t: 'ptr', ...p });
       return;
     }
     if (tool === 'text') return startText(e, p);

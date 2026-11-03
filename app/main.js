@@ -39,9 +39,21 @@ function createWindow() {
     const code = url.startsWith(SITE + '/r/') && url.slice(SITE.length + 3).split(/[?#]/)[0];
     if (code) recent.visit(code);
   });
-  win.webContents.setWindowOpenHandler(({ url }) => {
+  win.webContents.setWindowOpenHandler(({ url, frameName }) => {
     if (url.startsWith(SITE + '/download')) shell.openExternal(url); // update link from the page
+    // The child's camera over my full-screen slides (app.js fills this blank same-origin window).
+    if (url === 'about:blank' && frameName === 'huddle-cam' && sharedDisplay) {
+      const wa = sharedDisplay.workArea, width = 240, height = 180;
+      return { action: 'allow', overrideBrowserWindowOptions: {
+        x: wa.x + wa.width - width - 16, y: wa.y + wa.height - height - 16, width, height,
+        frame: false, skipTaskbar: true, focusable: false, minWidth: 120, minHeight: 90, backgroundColor: '#000' } };
+    }
     return { action: 'deny' };
+  });
+  win.webContents.on('did-create-window', (w) => {
+    w.setAlwaysOnTop(true, 'screen-saver'); // above the slide show, like the bar
+    w.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    w.setContentProtection(true); // not in my shared picture: the child must not see themselves
   });
   win.on('closed', () => { overlay?.destroy(); bar?.destroy(); app.quit(); });
 }
@@ -110,6 +122,7 @@ async function setClicks(on) {
   on = on && !!sharedDisplay;
   if (shareState.clicks === on) return;
   shareState.clicks = on;
+  tapLogged = false;
   pushBar();
   win?.webContents.send('clicks', on);
 }
@@ -130,10 +143,10 @@ function flash(text) {
 }
 
 const unit = (v) => typeof v === 'number' && v >= 0 && v <= 1;
-let lastClick = 0;
+let lastClick = 0, tapLogged = false;
 
 async function applyClick(m) {
-  if (!shareState.clicks || !sharedDisplay || !unit(m?.x) || !unit(m?.y)) return;
+  if (!shareState.clicks || !sharedDisplay || !unit(m?.x) || !unit(m?.y)) return appLog({ tap: 'ignored', clicks: shareState.clicks, sharing: !!sharedDisplay });
   const now = Date.now();
   if (now - lastClick < 150) return; // a child hammering the screen
   lastClick = now;
@@ -146,9 +159,13 @@ async function applyClick(m) {
     setTimeout(() => overlay?.setIgnoreMouseEvents(!shareState.tool), 300);
   }
   const to = toOS(p);
-  if (!(await input.accepts(to))) return flash('Нажатие ученика не прошло: на экране не показ PowerPoint');
+  if (!(await input.accepts(to))) {
+    appLog({ tap: 'rejected', under: input.under?.(to) ?? null }); // which window was there instead
+    return flash('Нажатие ученика не прошло: на экране не показ PowerPoint');
+  }
   if (!shareState.clicks || !sharedDisplay) return; // switched off while we looked
   input.click(to, toOS(screen.getCursorScreenPoint())); // my cursor jumps there and straight back
+  if (!tapLogged) { tapLogged = true; appLog({ tap: 'ok' }); } // first one per switch-on is enough
   overlay?.webContents.send('ink', { t: 'ptr', x: m.x, y: m.y }); // I see where the child tapped
 }
 
@@ -207,6 +224,7 @@ app.whenReady().then(() => {
     }
   });
   ipcMain.on('click', (e, m) => fromWin(e) && applyClick(m));
+  ipcMain.on('home', (e) => fromWin(e) && win.loadFile(path.join(__dirname, 'start.html'), { query: { site: SITE } }));
   ipcMain.on('clicks-off', (e) => fromWin(e) && setClicks(false));
 
   ipcMain.on('version', (e) => (e.returnValue = app.getVersion()));

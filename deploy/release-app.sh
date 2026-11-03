@@ -6,8 +6,11 @@ set -e
 V=$1
 [ -n "$V" ] || { echo "usage: $0 X.Y.Z"; exit 1; }
 cd "$(dirname "$0")/.."
+# Release only committed code: the tag must point at what was reviewed and passed the commit hooks.
+git diff --quiet HEAD || { echo "Uncommitted changes: commit them first (the hooks must pass), then release."; exit 1; }
 (cd app && npm version "$V" --no-git-tag-version --allow-same-version >/dev/null)
-git commit -qam "App v$V" || true # nothing to commit when the version was bumped by hand
+# Only the version files; a rejected commit (hook) stops here via set -e, before any tag exists.
+git diff --quiet HEAD -- app/package.json app/package-lock.json || git commit -q -m "App v$V" -- app/package.json app/package-lock.json
 git tag "v$V"
 git push -q
 git push -q origin "v$V"

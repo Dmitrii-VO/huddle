@@ -21,11 +21,12 @@ function windows() {
     },
     // The top-level window right under the tap must be "screenClass", PowerPoint's slide show window
     // (not the editor, not a notification or another app on top). Click-through windows (our overlay) don't count.
-    async accepts(to) {
+    under(to) {
       const buf = Buffer.alloc(512);
       const n = GetClassNameW(GetAncestor(WindowFromPoint(to), 2 /* GA_ROOT */), buf, 256);
-      return buf.toString('utf16le', 0, n * 2) === 'screenClass';
+      return buf.toString('utf16le', 0, n * 2);
     },
+    async accepts(to) { return this.under(to) === 'screenClass'; },
   };
 }
 

@@ -1,5 +1,7 @@
 import { isInk } from '/ink.js';
 import { createTools } from '/tools.js';
+import { createChat } from '/chat.js';
+import '/view.js';
 import { startDiag } from '/diag.js';
 import { PRESETS, applyScreen, autoCodec, autoStart, preferCodec, probeCodecs, watchScreen } from '/quality.js';
 import { initSettings, loadSettings } from '/settings.js';
@@ -183,6 +185,24 @@ function stop() {
   render();
 }
 
+// Desktop app while I share: the child's camera in a small window over my full-screen slides. main.js keeps it
+// on top and out of the captured picture; it's a blank same-origin window, so the stream is simply handed over.
+let camWin = null;
+function showCam() {
+  if (!window.huddle || !screenStream) { camWin?.close(); camWin = null; return; }
+  if (!camWin || camWin.closed) {
+    camWin = open('about:blank', 'huddle-cam');
+    if (!camWin) return;
+    const d = camWin.document;
+    d.title = 'Ученик';
+    d.body.style.cssText = 'margin:0;background:#000;overflow:hidden;-webkit-app-region:drag'; // drag anywhere to move
+    d.body.innerHTML = '<video autoplay playsinline muted style="width:100vw;height:100vh;object-fit:cover"></video>';
+  }
+  const v = camWin.document.querySelector('video');
+  const cam = remoteStreams.get(remoteCamId) ?? null; // muted copy: the sound keeps playing in the main window
+  if (v.srcObject !== cam) v.srcObject = cam;
+}
+
 function render() {
   const screen = remoteStreams.get(remoteScreenId) ?? null;
   const cam = remoteStreams.get(remoteCamId) ?? null;
@@ -195,6 +215,7 @@ function render() {
   $('local-tile').classList.toggle('nocam', !local.getVideoTracks()[0]?.enabled);
   if (!screen) { setTool(null); setClicks(false); ink.apply({ t: 'clear' }); }
   fitInk();
+  showCam();
 }
 
 // --- data channel ---
@@ -217,13 +238,13 @@ function onData(msg) {
   if (msg.t === 'chat') addMessage(msg.text, false);
   // Marks: over my real screen if I'm the one sharing (desktop app only), else over the picture I'm watching.
   if (isInk(msg)) return screenStream ? window.huddle?.ink(msg) : ink.apply(msg);
-  if (msg.t === 'click') return screenStream && window.huddle?.click(msg);
-  if (msg.t === 'clicks') return setClicks(!!msg.on);
+  if (msg.t === 'click') return screenStream ? window.huddle?.click(msg) : log({ ev: 'tap-dropped', why: 'not sharing' });
+  if (msg.t === 'clicks') { log({ ev: 'clicks-got', on: !!msg.on }); return setClicks(!!msg.on); }
   render();
 }
 
 // --- annotation tools and the child's taps (tools.js) ---
-const { ink, setTool, fitInk, setClicks } = createTools({ sendData, toast });
+const { ink, setTool, fitInk, setClicks } = createTools({ sendData, toast, log });
 
 // Desktop app while I share: the floating bar's buttons and my own marks.
 window.huddle?.onBarAction?.((a) => {
@@ -238,36 +259,8 @@ window.huddle?.onClicks?.((on) => {
   sendData({ t: 'clicks', on });
 });
 
-// --- chat ---
-function addMessage(text, mine, delivered = true) {
-  const p = document.createElement('p');
-  p.className = mine ? 'me' : '';
-  const who = document.createElement('b');
-  who.textContent = mine ? 'Вы' : 'Собеседник';
-  p.append(who, text + (delivered ? '' : ' (не доставлено)'));
-  $('messages').append(p);
-  p.scrollIntoView();
-  if (!mine && $('chat').hidden) {
-    $('unread').hidden = false;
-    toast(`Собеседник: ${text}`);
-  }
-}
-
-$('chat-form').onsubmit = (e) => {
-  e.preventDefault();
-  const text = $('chat-input').value.trim();
-  if (!text) return;
-  addMessage(text, true, sendData({ t: 'chat', text }));
-  $('chat-input').value = '';
-};
-function toggleChat() {
-  $('chat').hidden = !$('chat').hidden;
-  $('unread').hidden = true;
-  if (!$('chat').hidden) $('chat-input').focus();
-  fitInk();
-}
-$('chat-toggle').onclick = toggleChat;
-$('chat-close').onclick = toggleChat;
+// --- chat (chat.js) ---
+const addMessage = createChat({ sendData, toast, fitInk });
 
 // --- screen share ---
 function addScreen() {
@@ -348,6 +341,7 @@ function stopShare() {
   $('share').classList.remove('on');
   $('share').querySelector('span').textContent = 'Демонстрация';
   $('sharing').hidden = true;
+  showCam();
 }
 
 async function toggleShare() {
@@ -371,6 +365,7 @@ async function toggleShare() {
   $('share').classList.add('on');
   $('share').querySelector('span').textContent = 'Остановить';
   $('sharing').hidden = false;
+  showCam();
 }
 $('share').onclick = toggleShare;
 $('share').hidden = !navigator.mediaDevices?.getDisplayMedia; // phones can't share a screen
@@ -397,44 +392,21 @@ function toggle(button, getTracks, labels) {
 toggle($('mic'), () => local.getAudioTracks(), ['Выкл. звук', 'Вкл. звук']);
 toggle($('cam'), () => local.getVideoTracks(), ['Остановить видео', 'Включить видео']);
 
-// --- view: speaker / gallery, self view, fullscreen, leave ---
-$('view').onclick = () => {
-  const gallery = $('stage').classList.toggle('gallery');
-  $('view').querySelector('span').textContent = gallery ? 'Докладчик' : 'Галерея';
-};
-$('hide-self').onclick = () => { $('local-tile').hidden = true; $('show-self').hidden = false; };
-$('show-self').onclick = () => { $('local-tile').hidden = false; $('show-self').hidden = true; };
-
-// Drag my floating video around the stage (speaker view only).
-$('local-tile').onpointerdown = (e) => {
-  const tile = $('local-tile'), stage = $('stage');
-  if (e.target.id === 'hide-self' || getComputedStyle(tile).position !== 'absolute') return;
-  tile.setPointerCapture(e.pointerId);
-  const start = { x: e.clientX - tile.offsetLeft, y: e.clientY - tile.offsetTop };
-  tile.onpointermove = (m) => {
-    tile.style.left = Math.max(0, Math.min(stage.clientWidth - tile.offsetWidth, m.clientX - start.x)) + 'px';
-    tile.style.top = Math.max(0, Math.min(stage.clientHeight - tile.offsetHeight, m.clientY - start.y)) + 'px';
-    tile.style.right = 'auto';
-  };
-  tile.onpointerup = () => (tile.onpointermove = null);
-};
-
-$('fullscreen').onclick = () => {
-  if (document.fullscreenElement) document.exitFullscreen();
-  else document.documentElement.requestFullscreen();
-};
-document.onfullscreenchange = () => {
-  $('fullscreen').querySelector('span').textContent = document.fullscreenElement ? 'Обычный экран' : 'Во весь экран';
-};
-
+// --- leave (layout, self view, fullscreen: view.js) ---
 $('leave').onclick = () => {
   if (screenStream) stopShare();
   stop();
-  ws.onclose = null;
   ws.onclose = null; // leaving on purpose: no auto-reconnect
   ws.close();
   local.getTracks().forEach((t) => t.stop());
   document.body.innerHTML = '<div class="left-screen"><h2>Вы вышли из урока</h2><button onclick="location.reload()">Вернуться</button></div>';
+  if (window.huddle?.home) { // desktop app: back to its start screen (recent lessons, new lesson)
+    const home = document.createElement('button');
+    home.className = 'quiet';
+    home.textContent = 'На главную';
+    home.onclick = () => window.huddle.home();
+    document.querySelector('.left-screen').append(home);
+  }
 };
 
 // --- diagnostics: 'Связь' indicator + stats/events in the server log (diag.js) ---
