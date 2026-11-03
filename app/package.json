@@ -1,7 +1,7 @@
 {
   "name": "huddle-app",
   "productName": "Huddle",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "main": "main.js",
   "scripts": {
