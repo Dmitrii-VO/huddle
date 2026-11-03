@@ -29,6 +29,9 @@ let autoStep = autoStart(); // auto-quality ladder position, moved by the watchd
 $('local').srcObject = local;
 
 let pc = null, dc = null, polite = false, makingOffer = false, ignoreOffer = false;
+// Codec preferences set what the OTHER side sends us. So each side announces what it encodes best (`codec`)
+// and asks the peer for the peer's own choice: a phone then sends hardware H.264, not software VP8.
+let peerCodec = null, codecDirty = false;
 let screenStream = null, screenSenders = [];
 const remoteStreams = new Map();
 let remoteCamId = null, remoteScreenId = null, remoteState = { mic: true, cam: true };
@@ -61,16 +64,30 @@ ws.onmessage = ({ data }) => {
   if (msg.type === 'joined') {
     status(msg.peer ? 'Соединение…' : 'Ждём собеседника — нажмите «Пригласить»');
     polite = msg.peer; // the joiner waits for the first offer instead of racing its own
+    if (msg.peer) announceCodec();
   } else if (msg.type === 'peer-joined') {
-    polite = false; start();
+    polite = false;
+    announceCodec(); // before the offer: the joiner builds its answer with it
+    start();
+  } else if (msg.type === 'codec') {
+    peerCodec = msg.name;
+    usePeerCodec();
   } else if (msg.type === 'peer-left') {
-    stop(); status('Собеседник вышел. Ждём…');
+    stop(); peerCodec = null; status('Собеседник вышел. Ждём…');
   } else {
     // Handle one at a time: a candidate must not race ahead of its description.
     signals = signals.then(() => onSignal(msg)).catch(console.error);
   }
 };
 let signals = Promise.resolve();
+const announceCodec = () => send({ type: 'codec', name: codec });
+// Takes effect on a renegotiation; wait for a stable state so it never collides with an offer in flight.
+function usePeerCodec() {
+  if (!pc) return;
+  preferCodec(pc, peerCodec ?? codec);
+  codecDirty = true;
+  if (pc.signalingState === 'stable' && !makingOffer) { codecDirty = false; negotiate(); }
+}
 ws.onclose = (e) => {
   if (e.code === 4001) return status('В комнате уже двое');
   // Still waiting alone: nothing to lose, so come back by ourselves. In a call, a reload would cut the media.
@@ -99,7 +116,7 @@ async function onSignal({ description, candidate }) {
 function start() {
   pc = new RTCPeerConnection({ iceServers });
   for (const t of local.getTracks()) pc.addTrack(t, local);
-  preferCodec(pc, codec); // before the first offer goes out
+  preferCodec(pc, peerCodec ?? codec); // before the first offer goes out (no peer choice yet: ours)
   if (screenStream) addScreen();
 
   dc = pc.createDataChannel('data', { negotiated: true, id: 0 });
@@ -111,6 +128,9 @@ function start() {
   };
 
   pc.onnegotiationneeded = negotiate;
+  pc.onsignalingstatechange = () => {
+    if (pc.signalingState === 'stable' && codecDirty) { codecDirty = false; negotiate(); }
+  };
   pc.onicecandidate = ({ candidate }) => candidate && send({ candidate });
   pc.ontrack = ({ receiver, streams: [stream] }) => {
     setLatency(receiver);
@@ -125,6 +145,8 @@ function start() {
     const s = pc.connectionState;
     log({ ev: 'conn', state: s });
     if (s === 'failed') pc.restartIce();
+    // A network switch (Wi-Fi <-> mobile) shows as 'disconnected' first; 'failed' comes 10-30 s later. Don't wait.
+    if (s === 'disconnected') setTimeout(() => pc?.connectionState === 'disconnected' && pc.restartIce(), 2000);
     status({ connecting: 'Соединение…', connected: 'На связи', disconnected: 'Связь прерывается…', failed: 'Переподключение…' }[s] ?? $('status').textContent);
   };
 }
@@ -250,7 +272,7 @@ $('chat-close').onclick = toggleChat;
 function addScreen() {
   sendData({ t: 'screen', id: screenStream.id });
   screenSenders = screenStream.getTracks().map((t) => pc.addTrack(t, screenStream));
-  preferCodec(pc, codec);
+  preferCodec(pc, peerCodec ?? codec);
   applyScreen(screenVideo(), screenPreset());
 }
 
@@ -268,8 +290,7 @@ watchScreen({
   onCodecTooHeavy: () => {
     const from = codec;
     codec = caps.H264 ? 'H264' : 'VP8';
-    preferCodec(pc, codec);
-    if (pc) negotiate();
+    if (pc) announceCodec(); // the peer renegotiates to ask us for it
     log({ ev: 'codec-fallback', from, to: codec });
   },
 });
@@ -286,8 +307,7 @@ initSettings({
     if (key === 'lowLatency') return pc?.getReceivers().forEach(setLatency);
     if (key === 'codec') {
       codec = value === 'auto' ? autoCodec(caps) : value;
-      preferCodec(pc, codec);
-      if (pc) negotiate();
+      if (pc) announceCodec();
     }
   },
 });
