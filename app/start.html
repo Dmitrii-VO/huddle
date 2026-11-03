@@ -17,6 +17,10 @@
     button { cursor: pointer; }
     .primary { width: 100%; padding: 14px; background: #0e71eb; color: #fff; font-weight: 600; font-size: 16px; }
     .primary:hover { background: #0b5fc6; }
+    #back { margin-bottom: 10px; }
+    #back small { display: block; font-weight: 400; font-size: 13px; opacity: 0.85; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .primary.quiet { padding: 12px; background: #2c2c2c; font-size: 15px; }
+    .primary.quiet:hover { background: #383838; }
     .divider { display: flex; align-items: center; gap: 12px; margin: 22px 0 12px; color: #666; font-size: 13px; }
     .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: #2a2a2a; }
     form { display: flex; gap: 8px; }
@@ -45,6 +49,7 @@
       <div><h1>Huddle</h1><p class="sub">Онлайн-уроки: демонстрация, рисование, нажатия ученика</p></div>
     </div>
 
+    <button id="back" class="primary" hidden>Вернуться в урок<small></small></button>
     <button id="new" class="primary">Создать урок</button>
 
     <div class="divider">или войти по ссылке</div>
@@ -84,6 +89,15 @@
     async function render() {
       const list = (await window.huddle?.recent?.()) ?? [];
       const ul = $('recent');
+      // ponytail: "just left" = entered within 3 h (we store entry time, not exit); a longer lesson falls back to the list.
+      const last = list[0];
+      const fresh = last && Date.now() - last.at < 3 * 3600_000;
+      $('back').hidden = !fresh;
+      $('new').classList.toggle('quiet', !!fresh);
+      if (fresh) {
+        $('back').querySelector('small').textContent = last.name || `Урок от ${when(last.at)}`;
+        $('back').onclick = () => go(last.code);
+      }
       ul.replaceChildren();
       if (!list.length) {
         ul.innerHTML = '<li class="empty">Здесь появятся уроки, в которых вы были. Их можно переименовать, например «Маша, 2 класс».</li>';
