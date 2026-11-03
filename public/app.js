@@ -60,6 +60,22 @@ ws.onopen = async () => {
 window.huddle?.onAppLog?.((m) => log({ ev: 'app', ...m }));
 addEventListener('error', (e) => log({ ev: 'error', msg: String(e.message), at: `${e.filename}:${e.lineno}` }));
 addEventListener('unhandledrejection', (e) => log({ ev: 'error', msg: String(e.reason?.message ?? e.reason) }));
+// Why a phone drops out: iOS suspends a hidden page (locked screen, another app) within seconds, taking the
+// socket and the media with it; 'offline' means the network itself went away. Logged while we still can.
+document.addEventListener('visibilitychange', () => {
+  log({ ev: 'visibility', state: document.visibilityState });
+  if (document.visibilityState === 'visible') keepAwake(); // the lock is released whenever the page hides
+});
+addEventListener('offline', () => log({ ev: 'net', online: false }));
+addEventListener('online', () => log({ ev: 'net', online: true }));
+// No auto-lock during a lesson: a dimmed-out phone hides the page and the call drops (Safari 16.4+, Chrome).
+let wake = null;
+async function keepAwake() {
+  if (!navigator.wakeLock || wake?.released === false) return;
+  try { wake = await navigator.wakeLock.request('screen'); } catch (e) { log({ ev: 'wakelock', error: e.name }); }
+}
+keepAwake();
+addEventListener('pointerdown', keepAwake); // some browsers grant it only after a tap; a no-op once held
 
 ws.onmessage = ({ data }) => {
   const msg = JSON.parse(data);
