@@ -347,6 +347,7 @@ async function toggleShare() {
   $('sharing').hidden = false;
 }
 $('share').onclick = toggleShare;
+$('share').hidden = !navigator.mediaDevices?.getDisplayMedia; // phones can't share a screen
 $('stop-share').onclick = stopShare;
 
 // --- mic / camera ---

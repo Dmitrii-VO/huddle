@@ -48,7 +48,18 @@ const server = http.createServer((req, res) => {
 // ponytail: rooms live in memory; a server restart drops active calls (clients reconnect on reload).
 const rooms = new Map(); // code -> Set<ws>
 
-new WebSocketServer({ server, maxPayload: 64 * 1024 }).on('connection', (ws, req) => {
+const wss = new WebSocketServer({ server, maxPayload: 64 * 1024 });
+// A peer that lost its network never sends close: drop it after a missed pong, or it holds the room for ~15 min.
+setInterval(() => {
+  for (const ws of wss.clients) {
+    if (!ws.alive) ws.terminate();
+    else { ws.alive = false; ws.ping(); }
+  }
+}, 15_000);
+
+wss.on('connection', (ws, req) => {
+  ws.alive = true;
+  ws.on('pong', () => (ws.alive = true));
   ws.on('error', () => ws.terminate()); // bad frames must not crash the process
   const code = URL.parse(req.url, 'http://x')?.searchParams.get('room');
   if (!code || !/^[\w-]{4,32}$/.test(code)) return ws.close(4000, 'bad room');

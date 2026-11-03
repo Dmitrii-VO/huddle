@@ -211,7 +211,8 @@ app.whenReady().then(() => {
 
   ipcMain.on('version', (e) => (e.returnValue = app.getVersion()));
   createWindow();
-  ipcMain.handle('app-logs', (e) => (fromWin(e) ? appLogs : []));
+  // hand over once: a rejoin must not replay them
+  ipcMain.handle('app-logs', (e) => (fromWin(e) ? appLogs.splice(0) : []));
   // start screen only (a local file): the remote site has no business editing this list
   const fromStart = (e) => fromWin(e) && e.sender.getURL().startsWith('file:');
   ipcMain.handle('recent', (e) => (fromStart(e) ? recent.load() : []));
