@@ -3,7 +3,7 @@ import { createTools } from '/tools.js';
 import { createChat } from '/chat.js';
 import '/view.js';
 import { startDiag } from '/diag.js';
-import { PRESETS, applyScreen, autoCodec, autoStart, preferCodec, probeCodecs, watchScreen } from '/quality.js';
+import { PRESETS, applyScreen, autoCodec, autoStart, capCamera, preferCodec, probeCodecs, watchScreen } from '/quality.js';
 import { initSettings, loadSettings } from '/settings.js';
 
 const $ = (id) => document.getElementById(id);
@@ -166,6 +166,7 @@ function start() {
     const s = pc.connectionState;
     log({ ev: 'conn', state: s });
     if (s === 'failed') pc.restartIce();
+    if (s === 'connected') capCamera(pc, local);
     // A network switch (Wi-Fi <-> mobile) shows as 'disconnected' first; 'failed' comes 10-30 s later. Don't wait.
     if (s === 'disconnected') setTimeout(() => pc?.connectionState === 'disconnected' && pc.restartIce(), 2000);
     status({ connecting: 'Соединение…', connected: 'На связи', disconnected: 'Связь прерывается…', failed: 'Переподключение…' }[s] ?? $('status').textContent);

@@ -49,6 +49,18 @@ export function preferCodec(pc, name) {
   }
 }
 
+// A face needs ~0.7 Mbit/s; left alone the browser sends 1.5+, which fills a phone's uplink: packets queue,
+// the audio jitter buffer swells to ~0.6 s after every hiccup, and the video is held back to match it.
+export function capCamera(pc, local) {
+  for (const sender of pc.getSenders()) {
+    if (sender.track?.kind !== 'video' || !local.getTracks().includes(sender.track)) continue;
+    const params = sender.getParameters();
+    if (!params.encodings?.length || params.encodings[0].maxBitrate === 700_000) continue;
+    params.encodings[0].maxBitrate = 700_000;
+    sender.setParameters(params).catch((e) => console.warn('capCamera', e));
+  }
+}
+
 // Size / frame rate / content hint for the screen sender. Retina and 4K captures are scaled down here.
 export async function applyScreen(sender, { w, fps, hint }) {
   const track = sender?.track;
