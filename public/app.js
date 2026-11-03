@@ -105,6 +105,7 @@ async function onSignal({ description, candidate }) {
     if (ignoreOffer) return;
     await pc.setRemoteDescription(description);
     if (description.type === 'offer') {
+      preferCodec(pc, peerCodec ?? codec); // the offer may have added a transceiver (screen share): ours applies to it too
       await pc.setLocalDescription();
       send({ description: pc.localDescription });
     }
