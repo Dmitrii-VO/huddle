@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('huddle', {
   home: () => ipcRenderer.send('home'),
   appLogs: () => ipcRenderer.invoke('app-logs'),
   onAppLog: on('app-log'),
+  onReshare: on('reshare'),
   barState: (s) => ipcRenderer.send('bar-state', s),
   onBarAction: on('bar-action'),
   onInkOut: on('ink-out'),
@@ -29,6 +30,9 @@ contextBridge.exposeInMainWorld('huddle', {
   // prompt window
   promptAnswer: (i) => ipcRenderer.send('prompt-answer', i),
   promptSize: (h) => ipcRenderer.send('prompt-size', h),
+  // share picker
+  onPicker: on('picker'),
+  pickerAnswer: (i) => ipcRenderer.send('picker-answer', i),
   // bar
   bar: (action) => ipcRenderer.send('bar', action),
   onState: on('state'),

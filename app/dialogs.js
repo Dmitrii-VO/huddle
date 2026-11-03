@@ -41,4 +41,34 @@ function ask({ parent, title, detail = '', buttons, kind = 'info', onTop = false
   });
 }
 
-module.exports = { ask };
+// "What to show": whole screens first, then windows, with thumbnails. Resolves with a source or null.
+function pick({ parent, sources, hint }) {
+  return new Promise((resolve) => {
+    const w = new BrowserWindow({
+      parent, modal: true, width: 760, height: 560, show: false, frame: false, resizable: false,
+      minimizable: false, maximizable: false, backgroundColor: '#1c1c1c', title: 'Что показать',
+      webPreferences: { preload: path.join(__dirname, 'preload.js') },
+    });
+    let done = false;
+    const finish = (i) => {
+      if (done) return;
+      done = true;
+      ipcMain.off('picker-answer', onAnswer);
+      resolve(sources[i] ?? null);
+      if (!w.isDestroyed()) w.destroy();
+    };
+    const onAnswer = (e, i) => e.sender === w.webContents && finish(i);
+    ipcMain.on('picker-answer', onAnswer);
+    w.on('closed', () => finish(-1));
+    w.webContents.on('did-finish-load', () => {
+      w.webContents.send('picker', {
+        hint,
+        items: sources.map((s) => ({ name: s.name, screen: s.id.startsWith('screen:'), thumb: s.thumbnail.toDataURL() })),
+      });
+      w.show();
+    });
+    w.loadFile(path.join(__dirname, 'picker.html'));
+  });
+}
+
+module.exports = { ask, pick };

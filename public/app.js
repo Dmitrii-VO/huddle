@@ -2,6 +2,7 @@ import { isInk } from '/ink.js';
 import { createTools } from '/tools.js';
 import { createChat } from '/chat.js';
 import '/view.js';
+import { syncCam } from '/camwin.js';
 import { startDiag } from '/diag.js';
 import { PRESETS, applyScreen, autoCodec, autoStart, capCamera, preferCodec, probeCodecs, watchScreen } from '/quality.js';
 import { initSettings, loadSettings } from '/settings.js';
@@ -204,23 +205,7 @@ function stop() {
   render();
 }
 
-// Desktop app while I share: the child's camera in a small window over my full-screen slides. main.js keeps it
-// on top and out of the captured picture; it's a blank same-origin window, so the stream is simply handed over.
-let camWin = null;
-function showCam() {
-  if (!window.huddle || !screenStream) { camWin?.close(); camWin = null; return; }
-  if (!camWin || camWin.closed) {
-    camWin = open('about:blank', 'huddle-cam');
-    if (!camWin) return;
-    const d = camWin.document;
-    d.title = 'Ученик';
-    d.body.style.cssText = 'margin:0;background:#000;overflow:hidden;-webkit-app-region:drag'; // drag anywhere to move
-    d.body.innerHTML = '<video autoplay playsinline muted style="width:100vw;height:100vh;object-fit:cover"></video>';
-  }
-  const v = camWin.document.querySelector('video');
-  const cam = remoteStreams.get(remoteCamId) ?? null; // muted copy: the sound keeps playing in the main window
-  if (v.srcObject !== cam) v.srcObject = cam;
-}
+const showCam = () => syncCam(!!(window.huddle && screenStream), remoteStreams.get(remoteCamId) ?? null);
 
 function render() {
   const screen = remoteStreams.get(remoteScreenId) ?? null;
@@ -368,9 +353,8 @@ async function toggleShare() {
   try {
     screenStream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: screenPreset().fps } });
   } catch (e) {
-    // In a browser NotAllowedError is usually just "cancelled the picker"; in the app it's a real failure.
     log({ ev: 'share-error', name: e.name, msg: e.message });
-    if (window.huddle || e.name !== 'NotAllowedError') alert(`Не удалось показать экран: ${e.message}`);
+    if (e.name !== 'NotAllowedError') alert(`Не удалось показать экран: ${e.message}`); // NotAllowed: picker cancelled
     return;
   }
   const track = screenStream.getVideoTracks()[0];
@@ -378,7 +362,7 @@ async function toggleShare() {
   log({ ev: 'share', on: true, ...track.getSettings() });
   // Ask the capturer itself for less, where supported (Safari rejects size limits in getDisplayMedia).
   await track.applyConstraints({ width: { max: 1920 }, height: { max: 1080 }, frameRate: { max: screenPreset().fps } }).catch(() => {}); // one call: each one restarts the capturer
-  track.onended = stopShare;    // browser's own "Stop sharing" button
+  track.onended = () => endedShare(track); // browser's own "Stop sharing" button, or the shared window closed
   if (pc) addScreen();
   reportMic();
   $('share').classList.add('on');
@@ -386,6 +370,28 @@ async function toggleShare() {
   $('sharing').hidden = false;
   showCam();
 }
+// The app swaps PowerPoint's editor and slide show under one stream; a closing slide show ends its track first.
+function endedShare(track) {
+  setTimeout(() => screenStream?.getVideoTracks()[0] === track && stopShare(), window.huddle ? 1500 : 0);
+}
+window.huddle?.onReshare?.(async () => {
+  if (!screenStream) return;
+  const fps = screenPreset().fps;
+  let next;
+  try { [next] = (await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: fps } })).getVideoTracks(); }
+  catch (e) { return log({ ev: 'reshare-error', name: e.name }); }
+  const old = screenStream?.getVideoTracks()[0];
+  if (!old) return next.stop();
+  next.contentHint = 'detail';
+  await next.applyConstraints({ width: { max: 1920 }, height: { max: 1080 }, frameRate: { max: fps } }).catch(() => {});
+  screenStream.removeTrack(old);
+  screenStream.addTrack(next);
+  next.onended = () => endedShare(next);
+  old.stop();
+  await screenVideo()?.replaceTrack(next);
+  applyScreen(screenVideo(), screenPreset());
+  log({ ev: 'reshare', ...next.getSettings() });
+});
 $('share').onclick = toggleShare;
 $('share').hidden = !navigator.mediaDevices?.getDisplayMedia; // phones can't share a screen
 $('stop-share').onclick = stopShare;

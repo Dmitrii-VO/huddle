@@ -12,6 +12,20 @@ function windows() {
   const WindowFromPoint = user32.func('void * __stdcall WindowFromPoint(POINT p)');
   const GetAncestor = user32.func('void * __stdcall GetAncestor(void *hwnd, uint32 flags)');
   const GetClassNameW = user32.func('int __stdcall GetClassNameW(void *hwnd, _Out_ uint8 *buf, int max)');
+  // Shared windows go by handle number (desktopCapturer ids are "window:<HWND>:0").
+  const ClassOf = user32.func('int __stdcall GetClassNameW(intptr hwnd, _Out_ uint8 *buf, int max)');
+  const FindWindowW = user32.func('intptr __stdcall FindWindowW(str16 cls, str16 title)');
+  const IsWindowVisible = user32.func('bool __stdcall IsWindowVisible(intptr hwnd)');
+  const IsIconic = user32.func('bool __stdcall IsIconic(intptr hwnd)');
+  const RECT = koffi.struct('RECT', { left: 'long', top: 'long', right: 'long', bottom: 'long' });
+  const RootAt = user32.func('intptr __stdcall WindowFromPoint(POINT p)');
+  const AncestorOf = user32.func('intptr __stdcall GetAncestor(intptr hwnd, uint32 flags)');
+  const DwmGetWindowAttribute = koffi.load('dwmapi.dll')
+    .func('long __stdcall DwmGetWindowAttribute(intptr hwnd, uint32 attr, _Out_ RECT *r, uint32 size)');
+  const className = (hwnd) => {
+    const buf = Buffer.alloc(512);
+    return buf.toString('utf16le', 0, ClassOf(hwnd, buf, 256) * 2);
+  };
   return {
     click(to, back) {
       SetCursorPos(to.x, to.y);
@@ -26,7 +40,23 @@ function windows() {
       const n = GetClassNameW(GetAncestor(WindowFromPoint(to), 2 /* GA_ROOT */), buf, 256);
       return buf.toString('utf16le', 0, n * 2);
     },
-    async accepts(to) { return this.under(to) === 'screenClass'; },
+    // Or the window the teacher picked to share: whatever they show, they chose to let the child press.
+    async accepts(to, shared) { return this.under(to) === 'screenClass' || (!!shared && AncestorOf(RootAt(to), 2) === shared); },
+    className,
+    // The visible frame in physical pixels (what the window capturer crops to, without the invisible resize
+    // border); null once the window is closed, hidden or minimized.
+    rect(hwnd) {
+      if (!IsWindowVisible(hwnd) || IsIconic(hwnd)) return null;
+      const r = {};
+      if (DwmGetWindowAttribute(hwnd, 9 /* DWMWA_EXTENDED_FRAME_BOUNDS */, r, koffi.sizeof(RECT)) !== 0) return null;
+      return { x: r.left, y: r.top, width: r.right - r.left, height: r.bottom - r.top };
+    },
+    // PowerPoint: the slide show is its own window ("screenClass"), the editor is "PPTFrameClass".
+    slideShow() {
+      const hwnd = FindWindowW('screenClass', null);
+      return hwnd && IsWindowVisible(hwnd) ? hwnd : 0;
+    },
+    editor: () => FindWindowW('PPTFrameClass', null) || 0,
   };
 }
 

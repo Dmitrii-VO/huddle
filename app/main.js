@@ -5,7 +5,7 @@ const { app, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, screen, sessi
 const path = require('node:path');
 const os = require('node:os');
 const initUpdates = require('./updater');
-const { ask } = require('./dialogs');
+const { ask, pick } = require('./dialogs');
 const recent = require('./recent');
 
 const SITE = process.env.HUDDLE_URL || 'https://huddle.runterra.ru';
@@ -13,7 +13,11 @@ const preload = path.join(__dirname, 'preload.js');
 const isMac = process.platform === 'darwin';
 
 let win = null, overlay = null, bar = null;
-let sharedDisplay = null; // set while the screen is shared
+let sharedDisplay = null; // set while sharing: the display the bar and the camera window go on
+// What the child sees, in DIP: the screen, or the shared window as it is right now (null: unknown, e.g. a window
+// on macOS — then no overlay and no taps). Windows only: the shared window's handle, and PowerPoint's editor window
+// when the picture should follow its slide show.
+let sharedRect = null, sharedHwnd = 0, pptEditor = 0, trackTimer = null, reshareTo = null;
 let input = null;         // native module, loaded on first use
 // my own annotation tool while I share; clicks: the other side may tap my slides (lives here, never in the remote page)
 const shareState = { tool: null, color: 0, mic: true, clicks: false };
@@ -67,11 +71,10 @@ function floating(opts) {
   return w;
 }
 
-// ponytail: always the primary display; add a picker when someone shares with two monitors.
-function showOverlay(display) {
+function showOverlay(rect) {
   overlay?.destroy();
-  overlay = floating({ ...display.bounds, focusable: false, movable: false });
-  overlay.setBounds(display.bounds); // Windows trims the initial size to the work area (above the taskbar)
+  overlay = floating({ ...rect, focusable: false, movable: false });
+  overlay.setBounds(rect); // Windows trims the initial size to the work area (above the taskbar)
   overlay.setIgnoreMouseEvents(true);
   overlay.loadURL(SITE + '/overlay.html');
   overlay.on('closed', () => (overlay = null));
@@ -99,9 +102,63 @@ function setShareTool(tool) {
   pushBar();
 }
 
+const hwndOf = (id) => Number(/^window:(\d+):/.exec(id)?.[1] ?? 0);
+const toDip = (r) => r && screen.screenToDipRect(null, r);
+
+function startShare(source) {
+  clearInterval(trackTimer);
+  const primary = screen.getPrimaryDisplay();
+  sharedHwnd = hwndOf(source.id);
+  pptEditor = 0;
+  if (!sharedHwnd) {
+    sharedDisplay = screen.getAllDisplays().find((d) => String(d.id) === source.display_id) ?? primary;
+    sharedRect = sharedDisplay.bounds;
+  } else if (process.platform === 'win32') {
+    input ??= require('./input');
+    const cls = input.className(sharedHwnd);
+    pptEditor = cls === 'PPTFrameClass' ? sharedHwnd : cls === 'screenClass' ? input.editor() : 0;
+    sharedRect = toDip(input.rect(sharedHwnd));
+    sharedDisplay = screen.getDisplayMatching(sharedRect ?? primary.bounds);
+    trackTimer = setInterval(trackWindow, 500);
+  } else {
+    sharedRect = null; // ponytail: no window geometry on macOS yet (CGWindowListCopyWindowInfo) — no overlay, no taps
+    sharedDisplay = primary;
+  }
+  appLog({ share: sharedHwnd ? 'window' : 'screen', powerpoint: !!pptEditor });
+  if (sharedRect) showOverlay(sharedRect);
+  showBar(sharedDisplay);
+}
+
+// Twice a second while a window is shared: keep the overlay on it, and with PowerPoint show the slide show
+// while it runs and the editor otherwise (they are separate windows, a capture sticks to one).
+function trackWindow() {
+  const r = toDip(input.rect(sharedHwnd));
+  if (JSON.stringify(r) !== JSON.stringify(sharedRect)) {
+    sharedRect = r;
+    if (!r) overlay?.hide();
+    else if (overlay) { overlay.setBounds(r); overlay.showInactive(); }
+    else showOverlay(r);
+  }
+  if (!pptEditor || reshareTo) return;
+  const want = input.slideShow() || (input.rect(pptEditor) ? pptEditor : 0);
+  if (want && want !== sharedHwnd) switchTo(want);
+}
+
+async function switchTo(hwnd) {
+  const sources = await desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 0, height: 0 } });
+  const source = sources.find((s) => hwndOf(s.id) === hwnd);
+  if (!source || !sharedDisplay || reshareTo) return;
+  reshareTo = source; // the page asks again (getDisplayMedia) and gets this one without the picker
+  sharedHwnd = hwnd;
+  appLog({ share: 'follow', to: input.className(hwnd) });
+  win?.webContents.send('reshare');
+}
+
 function endShare() {
   setClicks(false);
-  sharedDisplay = null;
+  clearInterval(trackTimer);
+  sharedDisplay = sharedRect = reshareTo = null;
+  sharedHwnd = pptEditor = 0;
   shareState.tool = null;
   overlay?.destroy();
   bar?.destroy();
@@ -129,7 +186,7 @@ async function setClicks(on) {
 
 // Normalized (0..1) point on the shared display -> screen point (DIP) -> what the OS input API expects.
 function toPoint(x, y) {
-  const b = sharedDisplay.bounds;
+  const b = sharedRect;
   return { x: Math.round(b.x + x * b.width), y: Math.round(b.y + y * b.height) };
 }
 const toOS = (p) => (isMac ? p : screen.dipToScreenPoint(p)); // Windows SetCursorPos takes physical pixels
@@ -146,7 +203,7 @@ const unit = (v) => typeof v === 'number' && v >= 0 && v <= 1;
 let lastClick = 0, tapLogged = false;
 
 async function applyClick(m) {
-  if (!shareState.clicks || !sharedDisplay || !unit(m?.x) || !unit(m?.y)) return appLog({ tap: 'ignored', clicks: shareState.clicks, sharing: !!sharedDisplay });
+  if (!shareState.clicks || !sharedRect || !unit(m?.x) || !unit(m?.y)) return appLog({ tap: 'ignored', clicks: shareState.clicks, sharing: !!sharedDisplay, where: !!sharedRect });
   const now = Date.now();
   if (now - lastClick < 150) return; // a child hammering the screen
   lastClick = now;
@@ -159,11 +216,11 @@ async function applyClick(m) {
     setTimeout(() => overlay?.setIgnoreMouseEvents(!shareState.tool), 300);
   }
   const to = toOS(p);
-  if (!(await input.accepts(to))) {
+  if (!(await input.accepts(to, sharedHwnd))) {
     appLog({ tap: 'rejected', under: input.under?.(to) ?? null }); // which window was there instead
-    return flash('Нажатие ученика не прошло: на экране не показ PowerPoint');
+    return flash(sharedHwnd ? 'Нажатие ученика не прошло: показываемое окно закрыто другим' : 'Нажатие ученика не прошло: на экране не показ PowerPoint');
   }
-  if (!shareState.clicks || !sharedDisplay) return; // switched off while we looked
+  if (!shareState.clicks || !sharedRect) return; // switched off (or the window went away) while we looked
   input.click(to, toOS(screen.getCursorScreenPoint())); // my cursor jumps there and straight back
   if (!tapLogged) { tapLogged = true; appLog({ tap: 'ok' }); } // first one per switch-on is enough
   overlay?.webContents.send('ink', { t: 'ptr', x: m.x, y: m.y }); // I see where the child tapped
@@ -174,10 +231,15 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => {
     cb(wc.getURL().startsWith(SITE + '/') && ['media', 'display-capture', 'clipboard-sanitized-write', 'fullscreen'].includes(permission));
   });
-  // "Демонстрация" shares the whole primary screen — overlay and bar must match what the other side sees.
+  // "Демонстрация": the teacher picks a screen or a window; overlay, bar and taps follow what the other side sees.
   session.defaultSession.setDisplayMediaRequestHandler(async (_req, cb) => {
-    const display = screen.getPrimaryDisplay();
-    const sources = await desktopCapturer.getSources({ types: ['screen'] }); // on macOS this also adds the app to the Screen Recording list
+    if (reshareTo) {
+      const source = reshareTo;
+      reshareTo = null;
+      return cb({ video: source });
+    }
+    // on macOS this also adds the app to the Screen Recording list
+    const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 } });
     if (isMac && systemPreferences.getMediaAccessStatus('screen') !== 'granted') {
       const response = await ask({
         parent: win, kind: 'warn',
@@ -188,11 +250,14 @@ app.whenReady().then(() => {
       if (response === 0) shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
       return cb({});
     }
-    const source = sources.find((s) => s.display_id === String(display.id)) ?? sources[0];
+    const own = new Set(BrowserWindow.getAllWindows().map((w) => w.getMediaSourceId()));
+    const source = await pick({
+      parent: win,
+      sources: sources.filter((s) => s.name && !own.has(s.id)),
+      hint: process.platform === 'win32' ? 'Окно PowerPoint: когда вы запустите показ слайдов, ученик сразу увидит его.' : '',
+    });
     if (!source) return cb({});
-    sharedDisplay = display;
-    showOverlay(display);
-    showBar(display);
+    startShare(source);
     cb({ video: source });
   });
 
