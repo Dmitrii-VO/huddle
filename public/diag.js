@@ -54,12 +54,13 @@ export function startDiag({ getPc, log, toast }) {
     $('net').className = `tb ${rtt < 150 ? 'good' : rtt < 300 ? 'fair' : 'poor'}`;
     $('net').querySelector('span').textContent = `${rtt} мс`;
     const audMs = aud.map(buf)[0] ?? null; // video is held back to stay in sync with this
+    const audJit = aud[0]?.jitter == null ? null : Math.round(aud[0].jitter * 1000); // arrival unevenness, what swells it
     const fpsIn = Math.max(0, ...inn.map((r) => Math.round(r.framesPerSecond ?? 0)));
     const busy = outs.find((o) => o.limit && o.limit !== 'none');
     info = `${relay ? 'Через сервер' : 'Напрямую'} · задержка сети ${rtt} мс · входящее видео ${fpsIn} к/с` +
       (busy ? ` · отправка ограничена: ${busy.limit === 'cpu' ? 'не хватает процессора' : 'не хватает сети'}` : '');
 
-    if (tick++ % 5 === 0) log({ ev: 'stats', path: relay ? 'relay' : 'direct', rtt, out: outs, in: ins, audMs });
+    if (tick++ % 5 === 0) log({ ev: 'stats', path: relay ? 'relay' : 'direct', rtt, out: outs, in: ins, audMs, audJit });
   }, 2000);
 
   $('net').onclick = () => toast(info);
