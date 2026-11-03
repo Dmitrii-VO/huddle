@@ -17,7 +17,7 @@ let sharedDisplay = null; // set while sharing: the display the bar and the came
 // What the child sees, in DIP: the screen, or the shared window as it is right now (null: unknown, e.g. a window
 // on macOS — then no overlay and no taps). Windows only: the shared window's handle, and PowerPoint's editor window
 // when the picture should follow its slide show.
-let sharedRect = null, sharedHwnd = 0, pptEditor = 0, trackTimer = null, reshareTo = null;
+let sharedRect = null, sharedHwnd = 0, pickedHwnd = 0, pptEditor = 0, trackTimer = null, reshareTo = null;
 let input = null;         // native module, loaded on first use
 // my own annotation tool while I share; clicks: the other side may tap my slides (lives here, never in the remote page)
 const shareState = { tool: null, color: 0, mic: true, clicks: false };
@@ -108,7 +108,7 @@ const toDip = (r) => r && screen.screenToDipRect(null, r);
 function startShare(source) {
   clearInterval(trackTimer);
   const primary = screen.getPrimaryDisplay();
-  sharedHwnd = hwndOf(source.id);
+  sharedHwnd = pickedHwnd = hwndOf(source.id);
   pptEditor = 0;
   if (!sharedHwnd) {
     sharedDisplay = screen.getAllDisplays().find((d) => String(d.id) === source.display_id) ?? primary;
@@ -140,7 +140,9 @@ function trackWindow() {
     else showOverlay(r);
   }
   if (!pptEditor || reshareTo) return;
-  const want = input.slideShow() || (input.rect(pptEditor) ? pptEditor : 0);
+  const show = input.slideShow();
+  // only this PowerPoint's own slide show, never another program's window that happens to use the class name
+  const want = (show && input.process(show) === input.process(pptEditor) ? show : 0) || (input.rect(pptEditor) ? pptEditor : 0);
   if (want && want !== sharedHwnd) switchTo(want);
 }
 
@@ -158,7 +160,7 @@ function endShare() {
   setClicks(false);
   clearInterval(trackTimer);
   sharedDisplay = sharedRect = reshareTo = null;
-  sharedHwnd = pptEditor = 0;
+  sharedHwnd = pickedHwnd = pptEditor = 0;
   shareState.tool = null;
   overlay?.destroy();
   bar?.destroy();
@@ -216,7 +218,7 @@ async function applyClick(m) {
     setTimeout(() => overlay?.setIgnoreMouseEvents(!shareState.tool), 300);
   }
   const to = toOS(p);
-  if (!(await input.accepts(to, sharedHwnd))) {
+  if (!(await input.accepts(to, pickedHwnd))) { // a window the app switched to by itself gets no taps (slide show aside)
     appLog({ tap: 'rejected', under: input.under?.(to) ?? null }); // which window was there instead
     return flash(sharedHwnd ? 'Нажатие ученика не прошло: показываемое окно закрыто другим' : 'Нажатие ученика не прошло: на экране не показ PowerPoint');
   }

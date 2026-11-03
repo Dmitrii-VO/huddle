@@ -17,6 +17,7 @@ function windows() {
   const FindWindowW = user32.func('intptr __stdcall FindWindowW(str16 cls, str16 title)');
   const IsWindowVisible = user32.func('bool __stdcall IsWindowVisible(intptr hwnd)');
   const IsIconic = user32.func('bool __stdcall IsIconic(intptr hwnd)');
+  const ProcessOf = user32.func('uint32 __stdcall GetWindowThreadProcessId(intptr hwnd, _Out_ uint32 *pid)');
   const RECT = koffi.struct('RECT', { left: 'long', top: 'long', right: 'long', bottom: 'long' });
   const RootAt = user32.func('intptr __stdcall WindowFromPoint(POINT p)');
   const AncestorOf = user32.func('intptr __stdcall GetAncestor(intptr hwnd, uint32 flags)');
@@ -57,6 +58,11 @@ function windows() {
       return hwnd && IsWindowVisible(hwnd) ? hwnd : 0;
     },
     editor: () => FindWindowW('PPTFrameClass', null) || 0,
+    process(hwnd) {
+      const pid = [0];
+      ProcessOf(hwnd, pid);
+      return pid[0];
+    },
   };
 }
 
