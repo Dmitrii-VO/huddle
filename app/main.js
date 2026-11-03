@@ -155,7 +155,7 @@ async function applyClick(m) {
 app.whenReady().then(() => {
   nativeTheme.themeSource = 'dark'; // dark title bar and system UI on Windows / macOS
   session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => {
-    cb(wc.getURL().startsWith(SITE + '/') && ['media', 'display-capture', 'clipboard-sanitized-write'].includes(permission));
+    cb(wc.getURL().startsWith(SITE + '/') && ['media', 'display-capture', 'clipboard-sanitized-write', 'fullscreen'].includes(permission));
   });
   // "Демонстрация" shares the whole primary screen — overlay and bar must match what the other side sees.
   session.defaultSession.setDisplayMediaRequestHandler(async (_req, cb) => {
