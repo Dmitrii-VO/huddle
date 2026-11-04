@@ -135,13 +135,14 @@ function run(argv) {
 async function powerpoint(src, tmp, expected, onProgress) {
   const pdf = path.join(tmp, 'deck.pdf'), out = path.join(tmp, 'out'), t0 = Date.now();
   onProgress('PowerPoint сохраняет презентацию, это может занять несколько минут…');
-  const info = await osa(`with timeout of 1800 seconds
+  const info = await osa(`set dest to (POSIX file "${pdf}") as string -- "Macintosh HD:Users:…": the form PowerPoint's save takes
+with timeout of 1800 seconds
   tell application "Microsoft PowerPoint"
     activate
     open POSIX file "${src}"
     set p to active presentation
     set info to (name of p) & ", слайдов " & (count of slides of p)
-    save p in POSIX file "${pdf}" as save as PDF
+    save p in dest as save as PDF
     return info
   end tell
 end timeout`);
