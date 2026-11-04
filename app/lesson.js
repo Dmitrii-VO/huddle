@@ -1,11 +1,11 @@
 // PPTX → Huddle lesson: each slide's static picture plus every click-animated shape as its own transparent layer,
-// and the click triggers that show / hide those layers. The slides are rendered by PowerPoint on macOS (driven
-// by AppleScript) and by ONLYOFFICE's converter (x2t) on Windows. Only appear / disappear is kept: any other
-// effect becomes a plain appear.
+// and the click triggers that show / hide those layers. The slides are rendered by PowerPoint (AppleScript on
+// macOS, COM on Windows); on Windows without PowerPoint by ONLYOFFICE's converter (x2t). Only appear / disappear
+// is kept: any other effect becomes a plain appear.
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFile } = require('node:child_process');
+const { execFile, execFileSync } = require('node:child_process');
 const { unzipSync, zipSync, strFromU8, strToU8 } = require('fflate');
 
 const isMac = process.platform === 'darwin';
@@ -77,15 +77,43 @@ function x2t(from, to, height, tmp) {
     (err, stdout, stderr) => (err ? reject(new Error(`x2t: ${stderr || stdout || err.message}`)) : resolve())));
 }
 
-// Why this computer can't prepare a lesson (shown to the teacher), or null.
-function missing() {
-  if (isMac) return fs.existsSync(POWERPOINT) ? null : 'Презентацию готовит Microsoft PowerPoint: установите его, затем попробуйте снова.';
-  return fs.existsSync(X2T) && fs.existsSync(FONTS) ? null
-    : 'Презентацию готовит ONLYOFFICE Desktop Editors: установите его и запустите один раз, затем попробуйте снова.';
+const hasOnlyoffice = () => !isMac && fs.existsSync(X2T) && fs.existsSync(FONTS);
+function hasPowerPoint() {
+  if (isMac) return fs.existsSync(POWERPOINT);
+  try { execFileSync('reg', ['query', 'HKCR\\PowerPoint.Application\\CLSID'], { stdio: 'ignore' }); return true; } catch { return false; }
 }
 
-// PowerPoint's "save as PNG" writes Slide1.png, Slide2.png… into a folder (names are localized: sort by the
-// number). Its picture size is its own choice; build() scales to WIDTH.
+// Why this computer can't prepare a lesson (shown to the teacher), or null.
+function missing() {
+  if (hasPowerPoint() || hasOnlyoffice()) return null;
+  return isMac ? 'Презентацию готовит Microsoft PowerPoint: установите его, затем попробуйте снова.'
+    : 'Презентацию готовит Microsoft PowerPoint или ONLYOFFICE Desktop Editors (его надо один раз запустить после установки): установите один из них, затем попробуйте снова.';
+}
+
+// Windows: PowerPoint over COM, hidden, exports every slide at the lesson's size. It is quit only if it wasn't
+// already running with something open (the teacher may have their slides there).
+async function powerpointWin(src, tmp, height) {
+  const out = path.join(tmp, 'out');
+  const script = `$ErrorActionPreference = 'Stop'
+$pp = New-Object -ComObject PowerPoint.Application
+$had = $pp.Presentations.Count
+$p = $pp.Presentations.Open($env:HD_SRC, -1, 0, 0)
+try { $p.Export($env:HD_OUT, 'PNG', ${WIDTH}, ${height}) } finally { $p.Close() }
+if ($had -eq 0) { $pp.Quit() }`;
+  await new Promise((resolve, reject) => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script],
+    { env: { ...process.env, HD_SRC: src, HD_OUT: out }, maxBuffer: 1 << 24, timeout: 3600e3 },
+    (err, stdout, stderr) => (err ? reject(new Error(`PowerPoint: ${stderr || err.message}`)) : resolve())));
+  return numbered(out);
+}
+
+// Slide1.png, Slide2.png… (names are localized: sorted by the number)
+function numbered(dir) {
+  const num = (f) => +/(\d+)\.png$/i.exec(f)[1];
+  return fs.readdirSync(dir).filter((f) => /\d+\.png$/i.test(f)).sort((a, b) => num(a) - num(b)).map((f) => fs.readFileSync(path.join(dir, f)));
+}
+
+// macOS: PowerPoint's "save as PNG" writes the slides into a folder; its picture size is its own choice,
+// build() scales to WIDTH.
 async function powerpoint(src, tmp) {
   const out = path.join(tmp, 'out');
   const script = `with timeout of 3600 seconds
@@ -98,9 +126,7 @@ async function powerpoint(src, tmp) {
 end timeout`;
   await new Promise((resolve, reject) => execFile('/usr/bin/osascript', ['-e', script], (err, stdout, stderr) =>
     (err ? reject(new Error(`PowerPoint: ${stderr || err.message}`)) : resolve())));
-  const dir = fs.existsSync(out) && fs.statSync(out).isDirectory() ? out : tmp;
-  const num = (f) => +/(\d+)\.png$/i.exec(f)[1];
-  return fs.readdirSync(dir).filter((f) => /\d+\.png$/i.test(f)).sort((a, b) => num(a) - num(b)).map((f) => fs.readFileSync(path.join(dir, f)));
+  return numbered(fs.existsSync(out) && fs.statSync(out).isDirectory() ? out : tmp);
 }
 
 // deck bytes → one PNG per slide, in order.
@@ -111,6 +137,9 @@ async function render(deck, height) {
     const src = path.join(tmp, 'deck.pptx');
     fs.writeFileSync(src, deck);
     if (isMac) return await powerpoint(src, tmp);
+    if (hasPowerPoint()) {
+      try { return await powerpointWin(src, tmp, height); } catch (e) { if (!hasOnlyoffice()) throw e; } // then ONLYOFFICE
+    }
     const out = path.join(tmp, 'out.zip');
     await x2t(src, out, height, tmp);
     const imgs = unzipSync(fs.readFileSync(out));
