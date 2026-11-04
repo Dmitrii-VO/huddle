@@ -229,7 +229,7 @@ async function applyClick(m) {
   overlay?.webContents.send('ink', { t: 'ptr', x: m.x, y: m.y }); // I see where the child tapped
 }
 
-// "Презентация": the teacher picks a PPTX; built once (x2t renders it, a couple of minutes), then cached by content.
+// "Презентация": the teacher picks a PPTX; built once (PowerPoint / ONLYOFFICE renders it, minutes), then cached by content.
 async function openLesson() {
   const { canceled, filePaths: [file] } = await dialog.showOpenDialog(win, { title: 'Презентация для урока', filters: [{ name: 'PowerPoint', extensions: ['pptx'] }], properties: ['openFile'] });
   if (canceled || !file) return null;
@@ -241,8 +241,9 @@ async function openLesson() {
   let zip;
   if (fs.existsSync(cached)) zip = fs.readFileSync(cached);
   else {
-    if (!fs.existsSync(lessons.X2T) || !fs.existsSync(lessons.FONTS)) {
-      await ask({ parent: win, kind: 'warn', title: 'Нужен ONLYOFFICE', detail: 'Презентацию готовит ONLYOFFICE Desktop Editors: установите его и запустите один раз, затем попробуйте снова.', buttons: ['Понятно'] });
+    const why = lessons.missing();
+    if (why) {
+      await ask({ parent: win, kind: 'warn', title: 'Не получится подготовить презентацию', detail: why, buttons: ['Понятно'] });
       return null;
     }
     const t = Date.now();

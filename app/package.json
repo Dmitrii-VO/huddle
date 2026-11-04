@@ -28,7 +28,8 @@
       "x64ArchFiles": "**/node_modules/@koromix/koffi-darwin-*/**",
       "extendInfo": {
         "NSCameraUsageDescription": "Камера для видеозвонка",
-        "NSMicrophoneUsageDescription": "Микрофон для видеозвонка"
+        "NSMicrophoneUsageDescription": "Микрофон для видеозвонка",
+        "NSAppleEventsUsageDescription": "PowerPoint готовит презентацию для урока"
       },
       "artifactName": "Huddle-mac-universal.${ext}"
     },

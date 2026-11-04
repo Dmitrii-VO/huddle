@@ -1,6 +1,7 @@
 // PPTX → Huddle lesson: each slide's static picture plus every click-animated shape as its own transparent layer,
-// and the click triggers that show / hide those layers. Rendering is ONLYOFFICE's converter (x2t), so the teacher
-// needs ONLYOFFICE Desktop Editors installed. Only appear / disappear is kept: any other effect becomes a plain appear.
+// and the click triggers that show / hide those layers. The slides are rendered by PowerPoint on macOS (driven
+// by AppleScript) and by ONLYOFFICE's converter (x2t) on Windows. Only appear / disappear is kept: any other
+// effect becomes a plain appear.
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -8,12 +9,12 @@ const { execFile } = require('node:child_process');
 const { unzipSync, zipSync, strFromU8, strToU8 } = require('fflate');
 
 const isMac = process.platform === 'darwin';
-const X2T = isMac ? '/Applications/ONLYOFFICE.app/Contents/Resources/converter/x2t'
-  : path.join(process.env.ProgramFiles || 'C:\\Program Files', 'ONLYOFFICE', 'DesktopEditors', 'converter', 'x2t.exe');
+const X2T = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'ONLYOFFICE', 'DesktopEditors', 'converter', 'x2t.exe');
 // The font list the desktop editors build on first run; without it x2t fails with "error code=open".
-const FONTS = isMac ? path.join(os.homedir(), 'Library/Containers/asc.onlyoffice.ONLYOFFICE/Data/Library/Application Support/asc.onlyoffice.ONLYOFFICE/data/fonts/AllFonts.js')
-  : path.join(process.env.LOCALAPPDATA || '', 'ONLYOFFICE', 'DesktopEditors', 'data', 'fonts', 'AllFonts.js');
-const FONT_DIR = isMac ? '/Library/Fonts' : 'C:/Windows/Fonts';
+const FONTS = path.join(process.env.LOCALAPPDATA || '', 'ONLYOFFICE', 'DesktopEditors', 'data', 'fonts', 'AllFonts.js');
+const POWERPOINT = '/Applications/Microsoft PowerPoint.app';
+// PowerPoint is sandboxed: its own container is the one place it reads and writes without asking.
+const PPT_TMP = path.join(os.homedir(), 'Library/Containers/com.microsoft.Powerpoint/Data/tmp');
 const WIDTH = 1920;
 
 const attr = (s, name) => new RegExp(`\\b${name}="([^"]*)"`).exec(s)?.[1];
@@ -71,15 +72,58 @@ function x2t(from, to, height, tmp) {
   fs.writeFileSync(params, `<?xml version="1.0" encoding="utf-8"?>
 <TaskQueueDataConvert><m_sFileFrom>${from}</m_sFileFrom><m_sFileTo>${to}</m_sFileTo><m_nFormatTo>1029</m_nFormatTo>
 <m_oThumbnail><format>4</format><aspect>1</aspect><first>false</first><width>${WIDTH}</width><height>${height}</height></m_oThumbnail>
-<m_sAllFontsPath>${FONTS}</m_sAllFontsPath><m_sFontDir>${FONT_DIR}</m_sFontDir><m_sTempDir>${tmp}</m_sTempDir></TaskQueueDataConvert>`);
+<m_sAllFontsPath>${FONTS}</m_sAllFontsPath><m_sFontDir>C:/Windows/Fonts</m_sFontDir><m_sTempDir>${tmp}</m_sTempDir></TaskQueueDataConvert>`);
   return new Promise((resolve, reject) => execFile(X2T, [params], { cwd: path.dirname(X2T), maxBuffer: 1 << 24 },
     (err, stdout, stderr) => (err ? reject(new Error(`x2t: ${stderr || stdout || err.message}`)) : resolve())));
 }
 
+// Why this computer can't prepare a lesson (shown to the teacher), or null.
+function missing() {
+  if (isMac) return fs.existsSync(POWERPOINT) ? null : 'Презентацию готовит Microsoft PowerPoint: установите его, затем попробуйте снова.';
+  return fs.existsSync(X2T) && fs.existsSync(FONTS) ? null
+    : 'Презентацию готовит ONLYOFFICE Desktop Editors: установите его и запустите один раз, затем попробуйте снова.';
+}
+
+// PowerPoint's "save as PNG" writes Slide1.png, Slide2.png… into a folder (names are localized: sort by the
+// number). Its picture size is its own choice; build() scales to WIDTH.
+async function powerpoint(src, tmp) {
+  const out = path.join(tmp, 'out');
+  const script = `with timeout of 3600 seconds
+  tell application "Microsoft PowerPoint"
+    open POSIX file "${src}"
+    set p to active presentation
+    save p in POSIX file "${out}" as save as PNG
+    close p saving no
+  end tell
+end timeout`;
+  await new Promise((resolve, reject) => execFile('/usr/bin/osascript', ['-e', script], (err, stdout, stderr) =>
+    (err ? reject(new Error(`PowerPoint: ${stderr || err.message}`)) : resolve())));
+  const dir = fs.existsSync(out) && fs.statSync(out).isDirectory() ? out : tmp;
+  const num = (f) => +/(\d+)\.png$/i.exec(f)[1];
+  return fs.readdirSync(dir).filter((f) => /\d+\.png$/i.test(f)).sort((a, b) => num(a) - num(b)).map((f) => fs.readFileSync(path.join(dir, f)));
+}
+
+// deck bytes → one PNG per slide, in order.
+async function render(deck, height) {
+  if (isMac) fs.mkdirSync(PPT_TMP, { recursive: true });
+  const tmp = fs.mkdtempSync(path.join(isMac ? PPT_TMP : os.tmpdir(), 'huddle-')); // ASCII path: x2t fails on some non-latin ones
+  try {
+    const src = path.join(tmp, 'deck.pptx');
+    fs.writeFileSync(src, deck);
+    if (isMac) return await powerpoint(src, tmp);
+    const out = path.join(tmp, 'out.zip');
+    await x2t(src, out, height, tmp);
+    const imgs = unzipSync(fs.readFileSync(out));
+    const nums = Object.keys(imgs).map((n) => +/^image(\d+)\.png$/.exec(n)?.[1]).filter(Boolean).sort((a, b) => a - b);
+    return nums.map((i) => Buffer.from(imgs[`image${i}.png`]));
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 // The same shape on white and on black gives its exact alpha: white − black = (1 − α)·255, and the black render
 // is already the colour premultiplied by α. Cropped to what is not fully transparent.
-function unblend(white, black, nativeImage) {
-  const w = nativeImage.createFromBuffer(white), b = nativeImage.createFromBuffer(black);
+function unblend(w, b, nativeImage) {
   const { width, height } = w.getSize();
   const W = w.toBitmap(), B = b.toBitmap();
   let x0 = width, y0 = height, x1 = -1, y1 = -1;
@@ -147,30 +191,26 @@ async function build(file, nativeImage, onProgress = () => {}) {
   z['ppt/_rels/presentation.xml.rels'] = strToU8(prels);
   z['ppt/presentation.xml'] = strToU8(pres.replace(/<p:sldIdLst>[\s\S]*?<\/p:sldIdLst>/, `<p:sldIdLst>${list}</p:sldIdLst>`));
 
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'huddle-')); // ASCII path: x2t fails on some non-latin ones
-  try {
-    const src = path.join(tmp, 'deck.pptx'), out = path.join(tmp, 'out.zip');
-    fs.writeFileSync(src, zipSync(z, { level: 0 }));
-    onProgress(`Готовлю ${order.length} слайдов, ${(deck.length - order.length) / 2} картинок-ответов…`);
-    await x2t(src, out, height, tmp);
-    const imgs = unzipSync(fs.readFileSync(out));
-    const png = (i) => imgs[`image${i + 1}.png`];
-    const files = {};
-    for (let i = 0; i < deck.length; i++) {
-      const [kind, si, li] = deck[i], slide = lesson.slides[si];
-      if (kind === 'base') files[slide.img] = nativeImage.createFromBuffer(Buffer.from(png(i))).toJPEG(90);
-      if (kind !== 'white') continue;
-      const cut = unblend(Buffer.from(png(i)), Buffer.from(png(i + 1)), nativeImage), layer = slide.layers[li];
-      layer.img = `s${si + 1}_${layer.id}.png`;
-      if (cut) { files[layer.img] = cut.png; Object.assign(layer, { x: cut.rect.x, y: cut.rect.y, w: cut.rect.width, h: cut.rect.height }); }
-      else Object.assign(layer, { img: null, x: 0, y: 0, w: 0, h: 0 }); // an empty shape (e.g. a transparent hit area)
-      if (li % 20 === 0) onProgress(`Слайд ${si + 1} из ${order.length}…`);
-    }
-    files['lesson.json'] = strToU8(JSON.stringify(lesson));
-    return zipSync(files, { level: 0 }); // jpg / png don't compress further
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+  onProgress(`Готовлю ${order.length} слайдов, ${(deck.length - order.length) / 2} картинок-ответов…`);
+  const pngs = await render(zipSync(z, { level: 0 }), height);
+  if (pngs.length !== deck.length) throw new Error(`Получилось ${pngs.length} картинок вместо ${deck.length}`);
+  const pic = (i) => {
+    const im = nativeImage.createFromBuffer(pngs[i]);
+    return im.getSize().width === WIDTH ? im : im.resize({ width: WIDTH, height, quality: 'best' });
+  };
+  const files = {};
+  for (let i = 0; i < deck.length; i++) {
+    const [kind, si, li] = deck[i], slide = lesson.slides[si];
+    if (kind === 'base') files[slide.img] = pic(i).toJPEG(90);
+    if (kind !== 'white') continue;
+    const cut = unblend(pic(i), pic(i + 1), nativeImage), layer = slide.layers[li];
+    layer.img = `s${si + 1}_${layer.id}.png`;
+    if (cut) { files[layer.img] = cut.png; Object.assign(layer, { x: cut.rect.x, y: cut.rect.y, w: cut.rect.width, h: cut.rect.height }); }
+    else Object.assign(layer, { img: null, x: 0, y: 0, w: 0, h: 0 }); // an empty shape (e.g. a transparent hit area)
+    if (li % 20 === 0) onProgress(`Слайд ${si + 1} из ${order.length}…`);
   }
+  files['lesson.json'] = strToU8(JSON.stringify(lesson));
+  return zipSync(files, { level: 0 }); // jpg / png don't compress further
 }
 
-module.exports = { build, shapes, triggers, X2T, FONTS };
+module.exports = { build, missing, shapes, triggers };
