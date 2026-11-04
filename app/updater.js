@@ -83,11 +83,20 @@ ${relaunch ? 'open "$OLD"' : ''}`;
     const zip = path.join(dir, asset.name);
     const res = await fetch(asset.browser_download_url);
     if (!res.ok) throw new Error(`download ${res.status}`);
-    fs.writeFileSync(zip, Buffer.from(await res.arrayBuffer()));
+    const bytes = Buffer.from(await res.arrayBuffer());
+    // The checksum electron-builder publishes next to it (what the Windows updater checks too): no broken or
+    // cut-short download gets installed. ponytail: same trust as the release itself; Developer ID signing is the real fix
+    const yml = release.assets.find((a) => a.name === 'latest-mac.yml');
+    const sums = yml && (await (await fetch(yml.browser_download_url)).text());
+    const want = sums && new RegExp(`url: ${asset.name.replace(/\./g, '\\.')}\\s+sha512: (\\S+)`).exec(sums)?.[1];
+    if (!want || require('node:crypto').createHash('sha512').update(bytes).digest('base64') !== want) throw new Error('checksum mismatch');
+    fs.writeFileSync(zip, bytes);
     await new Promise((resolve, reject) => execFile('/usr/bin/ditto', ['-x', '-k', zip, dir], (e) => (e ? reject(e) : resolve())));
     fs.rmSync(zip);
     const app2 = fs.readdirSync(dir).find((f) => f.endsWith('.app'));
     if (!app2) throw new Error('no .app in the zip');
+    const id = (p) => /<key>CFBundleIdentifier<\/key>\s*<string>([^<]+)/.exec(fs.readFileSync(path.join(p, 'Contents/Info.plist'), 'utf8'))?.[1];
+    if (id(path.join(dir, app2)) !== id(bundle)) throw new Error('not a Huddle bundle');
     return path.join(dir, app2);
   }
 
