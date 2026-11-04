@@ -26,6 +26,14 @@ macOS: only while PowerPoint is the front app — a notification or the PowerPoi
 take the tap, so turn on Do Not Disturb for the lesson. The switch turns itself off when sharing stops
 or the other side leaves; a newly joined peer never gets it without the teacher.
 
+### Presentation in Huddle (instead of sharing PowerPoint)
+
+«Презентация» → pick a PPTX. The app renders it through ONLYOFFICE Desktop Editors (install it and run it
+once; a lesson takes about two minutes the first time, then it is cached) into slide pictures plus each
+click-animated shape as its own layer. The child's page gets the whole lesson once over the call, then only
+which slide and what is shown: slides change instantly, both sides can tap the pictures, the teacher turns
+the slides (buttons, arrows, a presentation clicker). Only appear / disappear on click is kept.
+
 ### Release
 
     sh deploy/release-app.sh X.Y.Z   # bump, tag, push; GitHub Actions builds Mac + Windows

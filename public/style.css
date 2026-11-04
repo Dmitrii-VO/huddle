@@ -54,6 +54,7 @@ svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width:
 #lesson .slide img[hidden] { display: none; }
 #lesson .nav { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; opacity: 0.35; transition: opacity 0.2s; }
 #lesson .nav:hover { opacity: 1; }
+#lesson.remote .nav { display: none; }
 #lesson .nav button { font-size: 20px; padding: 0 10px; }
 #screen { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 #ink { position: absolute; z-index: 1; pointer-events: none; touch-action: none; }

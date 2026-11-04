@@ -236,7 +236,8 @@ async function openLesson() {
   const fs = require('node:fs');
   const bytes = fs.readFileSync(file);
   const dir = path.join(app.getPath('userData'), 'lessons');
-  const cached = path.join(dir, require('node:crypto').createHash('sha1').update(bytes).digest('hex') + '.zip');
+  const id = require('node:crypto').createHash('sha1').update(bytes).digest('hex');
+  const cached = path.join(dir, id + '.zip');
   let zip;
   if (fs.existsSync(cached)) zip = fs.readFileSync(cached);
   else {
@@ -256,7 +257,7 @@ async function openLesson() {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(cached, zip);
   }
-  return require('fflate').unzipSync(zip); // { 'lesson.json': bytes, 's1.jpg': bytes, ... }
+  return { id, files: require('fflate').unzipSync(zip) }; // files: { 'lesson.json': bytes, 's1.jpg': bytes, ... }
 }
 
 app.whenReady().then(() => {

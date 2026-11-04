@@ -144,6 +144,7 @@ function start() {
   if (screenStream) addScreen();
 
   dc = pc.createDataChannel('data', { negotiated: true, id: 0 });
+  lesson.attach(pc);
   dc.onmessage = (e) => onData(JSON.parse(e.data));
   dc.onopen = () => {
     sendData({ t: 'cam', id: local.id });
@@ -197,6 +198,7 @@ function setLatency(receiver) {
 function stop() {
   pc?.close();
   pc = dc = null;
+  lesson.detach();
   screenSenders = [];
   remoteStreams.clear();
   remoteCamId = remoteScreenId = null;
@@ -268,7 +270,7 @@ window.huddle?.onClicks?.((on) => {
 });
 
 // --- presentation in Huddle (lesson.js; the desktop app builds it from a PPTX) ---
-const lesson = createLesson({ onChange: () => render(), toast });
+const lesson = createLesson({ onChange: () => render(), toast, log });
 
 // --- chat (chat.js) ---
 const addMessage = createChat({ sendData, toast, fitInk });
