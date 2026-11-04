@@ -40,9 +40,19 @@ jobs:
       # Universal mac build needs koffi's native binary for both archs; npm only installs the runner's.
       - if: runner.os == 'macOS'
         run: npm install --no-save --force @koromix/koffi-darwin-x64@3.3.5 @koromix/koffi-darwin-arm64@3.3.5
+      # Mac: signed with our own self-signed certificate (deploy/mac-signing.pem; the key is in the secrets). Not Apple's,
+      # so a manual install still gets Gatekeeper's warning, but the signature stays the same from version to version
+      # and macOS keeps the permissions (screen recording, PowerPoint, accessibility) across updates.
+      # Trusted on the runner so codesign accepts it as an identity.
+      - if: runner.os == 'macOS'
+        run: sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain ../deploy/mac-signing.pem
       - run: ${{ matrix.cmd }} --publish never
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false # unsigned build
+          CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CERT_P12 || '' }}
+          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_CERT_PASSWORD || '' }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ runner.os == 'macOS' }} # Windows: unsigned
+      - if: runner.os == 'macOS'
+        run: codesign --verify --deep --strict dist/mac-universal/Huddle.app && codesign -d -r- dist/mac-universal/Huddle.app
       # latest.yml + .blockmap are what the Windows updater reads.
       - run: shopt -s nullglob; gh release upload "$GITHUB_REF_NAME" dist/*.dmg dist/*.zip dist/*.exe dist/*.blockmap dist/latest*.yml --clobber
         shell: bash

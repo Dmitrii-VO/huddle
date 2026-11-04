@@ -26,6 +26,9 @@
     ],
     "mac": {
       "x64ArchFiles": "**/node_modules/@koromix/koffi-darwin-*/**",
+      "identity": "Huddle",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
       "extendInfo": {
         "NSCameraUsageDescription": "Камера для видеозвонка",
         "NSMicrophoneUsageDescription": "Микрофон для видеозвонка",

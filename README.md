@@ -38,8 +38,12 @@ the slides (buttons, arrows, a presentation clicker). Only appear / disappear on
 
     sh deploy/release-app.sh X.Y.Z   # bump, tag, push; GitHub Actions builds Mac + Windows
 
-Installed apps offer the update: Windows through electron-updater, macOS (unsigned) by downloading the
+Installed apps offer the update: Windows through electron-updater, macOS by downloading the
 release's zip and swapping `Huddle.app` after quitting. Server changes go out separately with `sh deploy/update.sh`.
+
+The Mac build is signed with a self-signed certificate (`deploy/mac-signing.pem`; key: secrets `MAC_CERT_P12`,
+`MAC_CERT_PASSWORD`, backup on the developer's machine). Not Apple's, but the same each version, so macOS keeps
+the screen recording / PowerPoint / accessibility permissions across updates. A new certificate resets them once.
 
 ## Local
 
