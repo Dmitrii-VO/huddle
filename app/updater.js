@@ -81,9 +81,21 @@ ${relaunch ? 'open "$OLD"' : ''}`;
     if (!asset) throw new Error('no mac zip in the release');
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'huddle-update-'));
     const zip = path.join(dir, asset.name);
-    const res = await fetch(asset.browser_download_url);
+    // ~200 MB: progress on the Dock icon and in the journal; a stalled download gives up instead of hanging forever.
+    log({ update: 'downloading', mb: Math.round(asset.size / 1e6) });
+    const res = await fetch(asset.browser_download_url, { signal: AbortSignal.timeout(30 * 60_000) });
     if (!res.ok) throw new Error(`download ${res.status}`);
-    const bytes = Buffer.from(await res.arrayBuffer());
+    const parts = [];
+    let got = 0, logged = 0;
+    try {
+      for await (const chunk of res.body) {
+        parts.push(chunk);
+        got += chunk.length;
+        getWin()?.setProgressBar(got / asset.size);
+        if (got / asset.size >= logged + 0.25) log({ update: 'downloading', pct: (logged += 0.25) * 100 });
+      }
+    } finally { getWin()?.setProgressBar(-1); }
+    const bytes = Buffer.concat(parts);
     // The checksum electron-builder publishes next to it (what the Windows updater checks too): no broken or
     // cut-short download gets installed. ponytail: same trust as the release itself; Developer ID signing is the real fix
     const yml = release.assets.find((a) => a.name === 'latest-mac.yml');
