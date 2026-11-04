@@ -76,11 +76,13 @@ export function createLesson({ onChange, toast, log }) {
 
   // The whole state, not the tap: two taps crossing on the wire can't leave the sides different for long.
   const state = () => ({ t: 'lesson', id, slide: n, shown: [...shown], steps: [...steps] });
+  // Only the teacher turns slides: on the teacher's side a state for another slide is a stale tap, dropped.
   function apply(m) {
-    if (m.id !== id || !L) return;
-    if (m.slide !== n) show(m.slide);
-    shown = new Set(m.shown);
-    steps = new Map(m.steps);
+    if (m.id !== id || !L || !Number.isInteger(m.slide) || !Array.isArray(m.shown) || !Array.isArray(m.steps)) return;
+    if (m.slide !== n) { if (mine) return; show(m.slide); }
+    const s = L.slides[n], layers = new Set(s.layers.map((l) => l.id)), triggers = new Set(s.triggers.map((t) => t.id));
+    shown = new Set(m.shown.filter((x) => layers.has(x)));
+    steps = new Map(m.steps.filter((e) => Array.isArray(e) && triggers.has(e[0]) && Number.isInteger(e[1])));
     paint();
   }
 
@@ -161,6 +163,7 @@ export function createLesson({ onChange, toast, log }) {
     }
     const m = JSON.parse(data);
     if (m.t === 'lesson-file') {
+      if (mine || !(m.size >= 0 && m.count > 0)) return; // lessons go teacher → child only
       if (got?.id !== m.id) got = { id: m.id, count: m.count, files: {}, shown: 0, t0: Date.now() };
       got.file = { name: m.name, buf: new Uint8Array(m.size), at: 0 };
       if (!m.size) receive(new ArrayBuffer(0));
