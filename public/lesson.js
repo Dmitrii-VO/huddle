@@ -6,6 +6,15 @@
 const $ = (id) => document.getElementById(id);
 const CHUNK = 64 * 1024;
 
+// What is being prepared or sent, with a bar: p in 0..1, or none for "can't tell how long"; no text hides it.
+function status(text, p) {
+  const box = $('lesson-status'), bar = box.querySelector('progress');
+  box.hidden = !text;
+  box.querySelector('span').textContent = text ?? '';
+  if (p == null) bar.removeAttribute('value');
+  else bar.value = p;
+}
+
 export function createLesson({ onChange, toast, log }) {
   let L = null, id = null, mine = false, files = null, urls = {}, n = 0, shown = new Set(), steps = new Map();
   let fc = null, sending = 0, got = null; // got: the lesson being received
@@ -110,15 +119,17 @@ export function createLesson({ onChange, toast, log }) {
     e.preventDefault();
   });
 
-  // "Презентация" (desktop app only): it builds the lesson from a PPTX, progress comes as toasts.
+  // "Презентация" (desktop app only): it builds the lesson from a PPTX (minutes the first time), with a progress bar.
   $('lesson-open').hidden = !window.huddle?.openLesson;
   $('lesson-open').onclick = async () => {
-    const lesson = await window.huddle.openLesson();
+    $('lesson-open').disabled = true;
+    let lesson;
+    try { lesson = await window.huddle.openLesson(); } finally { $('lesson-open').disabled = false; status(null); }
     if (!lesson) return;
     open(lesson.id, lesson.files, true);
     sendFiles();
   };
-  window.huddle?.onLessonProgress?.(toast);
+  window.huddle?.onLessonProgress?.((m) => (typeof m === 'string' ? status(m) : status(m.text, m.p))); // a string: app 0.2.11 and older
 
   // --- the wire ---
   const post = (m) => fc?.readyState === 'open' && (fc.send(JSON.stringify(m)), true);
@@ -128,16 +139,20 @@ export function createLesson({ onChange, toast, log }) {
     if (fc?.readyState !== 'open' || !mine) return;
     const token = ++sending, t0 = Date.now(), list = Object.entries(files);
     const drained = () => new Promise((r) => fc.addEventListener('bufferedamountlow', r, { once: true }));
+    const total = list.reduce((sum, [, data]) => sum + data.length, 0);
     let bytes = 0;
-    for (const [name, data] of list) {
-      if (!post({ t: 'lesson-file', id, name, size: data.length, count: list.length })) return;
-      for (let off = 0; off < data.length; off += CHUNK) {
-        if (fc.bufferedAmount > 1 << 20) await drained();
-        if (token !== sending || fc?.readyState !== 'open') return; // another lesson, closed, or the call ended
-        fc.send(data.subarray(off, off + CHUNK));
+    try {
+      for (const [name, data] of list) {
+        status('Отправляю презентацию ученику…', bytes / total);
+        if (!post({ t: 'lesson-file', id, name, size: data.length, count: list.length })) return;
+        for (let off = 0; off < data.length; off += CHUNK) {
+          if (fc.bufferedAmount > 1 << 20) await drained();
+          if (token !== sending || fc?.readyState !== 'open') return; // another lesson, closed, or the call ended
+          fc.send(data.subarray(off, off + CHUNK));
+        }
+        bytes += data.length;
       }
-      bytes += data.length;
-    }
+    } finally { if (token === sending) status(null); }
     post(state());
     log({ ev: 'lesson-sent', mb: +(bytes / 1e6).toFixed(1), s: Math.round((Date.now() - t0) / 1000) });
   }
@@ -152,9 +167,8 @@ export function createLesson({ onChange, toast, log }) {
       got.files[f.name] = f.buf;
       got.file = null;
       const done = Object.keys(got.files).length;
-      const pctDone = Math.floor((done / got.count) * 10);
-      if (pctDone > got.shown) { got.shown = pctDone; toast(`Загружается презентация… ${pctDone * 10}%`); }
-      if (done < got.count) return;
+      if (done < got.count) return status('Загружается презентация…', done / got.count);
+      status(null);
       log({ ev: 'lesson-got', s: Math.round((Date.now() - got.t0) / 1000) });
       open(got.id, got.files, false);
       post({ t: 'lesson-ready', id: got.id });
@@ -164,7 +178,7 @@ export function createLesson({ onChange, toast, log }) {
     const m = JSON.parse(data);
     if (m.t === 'lesson-file') {
       if (mine || !(m.size >= 0 && m.count > 0)) return; // lessons go teacher → child only
-      if (got?.id !== m.id) got = { id: m.id, count: m.count, files: {}, shown: 0, t0: Date.now() };
+      if (got?.id !== m.id) got = { id: m.id, count: m.count, files: {}, t0: Date.now() };
       got.file = { name: m.name, buf: new Uint8Array(m.size), at: 0 };
       if (!m.size) receive(new ArrayBuffer(0));
     } else if (m.t === 'lesson-ready' && m.id === id) toast('Ученик получил презентацию');
@@ -184,6 +198,7 @@ export function createLesson({ onChange, toast, log }) {
   function detach() {
     fc = got = null;
     sending++;
+    status(null);
     if (L && !mine) close(false);
   }
 

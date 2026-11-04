@@ -248,7 +248,11 @@ async function openLesson() {
     }
     const t = Date.now();
     try {
-      zip = await lessons.build(file, nativeImage, (text) => win?.webContents.send('lesson-progress', text));
+      appLog({ lesson: 'start', mb: +(bytes.length / 1e6).toFixed(1) });
+      zip = await lessons.build(file, nativeImage, (text, p) => {
+        win?.webContents.send('lesson-progress', { text, p });
+        if (p == null) appLog({ lesson: 'step', text, s: Math.round((Date.now() - t) / 1000) }); // where it got to, if it hangs
+      });
     } catch (e) {
       appLog({ lesson: 'build-error', msg: String(e.message).slice(0, 600) });
       await ask({ parent: win, kind: 'warn', title: 'Не удалось подготовить презентацию', detail: String(e.message).slice(0, 600), buttons: ['Понятно'] });

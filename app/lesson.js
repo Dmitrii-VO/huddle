@@ -114,49 +114,56 @@ function numbered(dir) {
 
 const osa = (script) => new Promise((resolve, reject) => execFile('/usr/bin/osascript', ['-e', script], (err, stdout, stderr) =>
   (err ? reject(new Error(`PowerPoint: ${stderr || err.message}`)) : resolve(stdout.trim()))));
-const pngsIn = (dir) => fs.readdirSync(dir, { recursive: true }).filter((f) => /\d+\.png$/i.test(f));
 
-// macOS: PowerPoint's "save as PNG" writes the slides into a folder; its picture size is its own choice,
-// build() scales to WIDTH. The save may return before the pictures are written, so wait until there are as many
-// as slides and the count holds, and close the deck only then (closing earlier may cut the export).
+// PDF pages → 1.png, 2.png… at the given width: PDFKit through JavaScript for Automation (built into macOS).
+const PAGES = `ObjC.import('Quartz'); ObjC.import('AppKit');
+function run(argv) {
+  const [pdf, out] = argv, width = argv[2] / ($.NSScreen.mainScreen.isNil() ? 1 : $.NSScreen.mainScreen.backingScaleFactor); // Retina draws 2×
+  const doc = $.PDFDocument.alloc.initWithURL($.NSURL.fileURLWithPath(pdf));
+  if (doc.isNil()) throw new Error('PDF не открылся');
+  for (let i = 0; i < doc.pageCount; i++) {
+    const page = doc.pageAtIndex(i), box = page.boundsForBox(0).size; // 0: the media box
+    const img = page.thumbnailOfSizeForBox({ width, height: width * box.height / box.width }, 0);
+    const png = $.NSBitmapImageRep.imageRepWithData(img.TIFFRepresentation).representationUsingTypeProperties(4, $()); // 4: PNG
+    png.writeToFileAtomically(out + '/' + (i + 1) + '.png', true);
+  }
+  return doc.pageCount;
+}`;
+
+// macOS: PowerPoint saves the deck as one PDF (its "save as PNG" wrote nothing, twice), then PDFKit draws the pages.
+// activate: if PowerPoint asks something, the teacher sees it instead of a silent wait.
 async function powerpoint(src, tmp, expected, onProgress) {
-  const out = path.join(tmp, 'out'), t0 = Date.now();
-  const info = await osa(`with timeout of 3600 seconds
+  const pdf = path.join(tmp, 'deck.pdf'), out = path.join(tmp, 'out'), t0 = Date.now();
+  onProgress('PowerPoint сохраняет презентацию, это может занять несколько минут…');
+  const info = await osa(`with timeout of 1800 seconds
   tell application "Microsoft PowerPoint"
+    activate
     open POSIX file "${src}"
     set p to active presentation
     set info to (name of p) & ", слайдов " & (count of slides of p)
-    save p in POSIX file "${out}" as save as PNG
+    save p in POSIX file "${pdf}" as save as PDF
     return info
   end tell
 end timeout`);
-  const saved = Math.round((Date.now() - t0) / 1000);
-  let last = -1, idle = 0;
-  for (;;) {
-    const n = pngsIn(tmp).length;
-    if (n >= expected && n === last) break;
-    idle = n === last ? idle + 1 : 0;
-    if (idle > (n ? 120 : 1800)) break; // stopped: a minute without a new picture, 15 minutes without the first
-    if (n !== last && n) onProgress(`PowerPoint сохраняет слайды: ${n} из ${expected}…`);
-    last = n;
+  // The save may return before the file is complete: wait until its size holds.
+  for (let last = -1, i = 0; i < 240; i++) {
+    const size = fs.existsSync(pdf) ? fs.statSync(pdf).size : 0;
+    if (size && size === last) break;
+    last = size;
     await new Promise((r) => setTimeout(r, 500));
   }
   await osa(`tell application "Microsoft PowerPoint" to close (every presentation whose name is "deck.pptx") saving no`).catch(() => {});
-  const files = pngsIn(tmp);
-  if (files.length !== expected) {
-    // Where did they go? Any picture PowerPoint wrote in its container since we started.
-    const box = path.dirname(PPT_TMP);
-    let elsewhere = [];
-    try {
-      elsewhere = fs.readdirSync(box, { recursive: true }).filter((f) => /\.png$/i.test(f))
-        .filter((f) => { try { return fs.statSync(path.join(box, f)).mtimeMs >= t0; } catch { return false; } }).slice(0, 3);
-    } catch {}
-    const seen = fs.readdirSync(tmp, { recursive: true }).slice(0, 8).join(', ') || 'пусто';
-    throw new Error(`PowerPoint сохранил ${files.length} картинок вместо ${expected} (в папке: ${seen}; открыл: ${info}; сохранение ${saved} с` +
-      `${elsewhere.length ? `; картинки нашлись в ${elsewhere.join(', ')}` : '; других новых картинок нет'})`);
-  }
-  const num = (f) => +/(\d+)\.png$/i.exec(f)[1];
-  return files.sort((a, b) => num(a) - num(b)).map((f) => fs.readFileSync(path.join(tmp, f)));
+  const saved = Math.round((Date.now() - t0) / 1000);
+  if (!fs.existsSync(pdf)) throw new Error(`PowerPoint не сохранил PDF (открыл: ${info}; ${saved} с; в папке: ${fs.readdirSync(tmp).join(', ')})`);
+  fs.mkdirSync(out);
+  const tick = setInterval(() => onProgress('Рисую слайды…', fs.readdirSync(out).length / expected), 1000);
+  try {
+    await new Promise((resolve, reject) => execFile('/usr/bin/osascript', ['-l', 'JavaScript', '-e', PAGES, pdf, out, String(WIDTH)], { timeout: 1800e3 },
+      (err, stdout, stderr) => (err ? reject(new Error(`PDF → картинки: ${stderr || err.message}`)) : resolve())));
+  } finally { clearInterval(tick); }
+  const pngs = numbered(out);
+  if (pngs.length !== expected) throw new Error(`В PDF ${pngs.length} страниц вместо ${expected} (открыл: ${info}; сохранение ${saved} с)`);
+  return pngs;
 }
 
 // deck bytes → one PNG per slide, in order.
@@ -198,7 +205,7 @@ function unblend(w, b, nativeImage) {
   return { rect, png: full.crop(rect).toPNG() };
 }
 
-// → zip bytes: lesson.json + images. onProgress(text) for the teacher.
+// → zip bytes: lesson.json + images. onProgress(text, fraction or nothing) for the teacher.
 async function build(file, nativeImage, onProgress = () => {}) {
   const z = unzipSync(fs.readFileSync(file));
   const text = (n) => strFromU8(z[n]);
@@ -266,7 +273,7 @@ async function build(file, nativeImage, onProgress = () => {}) {
     layer.img = `s${si + 1}_${layer.id}.png`;
     if (cut) { files[layer.img] = cut.png; Object.assign(layer, { x: cut.rect.x, y: cut.rect.y, w: cut.rect.width, h: cut.rect.height }); }
     else Object.assign(layer, { img: null, x: 0, y: 0, w: 0, h: 0 }); // an empty shape (e.g. a transparent hit area)
-    if (li % 20 === 0) onProgress(`Слайд ${si + 1} из ${order.length}…`);
+    if (li % 20 === 0) onProgress(`Собираю слайд ${si + 1} из ${order.length}…`, i / deck.length);
   }
   files['lesson.json'] = strToU8(JSON.stringify(lesson));
   return zipSync(files, { level: 0 }); // jpg / png don't compress further
