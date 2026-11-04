@@ -127,7 +127,8 @@ export function createLesson({ onChange, toast, log }) {
     try { lesson = await window.huddle.openLesson(); } finally { $('lesson-open').disabled = false; status(null); }
     if (!lesson) return;
     open(lesson.id, lesson.files, true);
-    sendFiles();
+    if (fc?.readyState === 'open') sendFiles();
+    else toast('Ученик получит презентацию, как только подключится'); // fc.onopen sends it
   };
   window.huddle?.onLessonProgress?.((m) => (typeof m === 'string' ? status(m) : status(m.text, m.p))); // a string: app 0.2.11 and older
 
