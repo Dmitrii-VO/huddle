@@ -38,7 +38,8 @@ the slides (buttons, arrows, a presentation clicker). Only appear / disappear on
 
     sh deploy/release-app.sh X.Y.Z   # bump, tag, push; GitHub Actions builds Mac + Windows
 
-Installed apps offer the update. Server changes go out separately with `sh deploy/update.sh`.
+Installed apps offer the update: Windows through electron-updater, macOS (unsigned) by downloading the
+release's zip and swapping `Huddle.app` after quitting. Server changes go out separately with `sh deploy/update.sh`.
 
 ## Local
 

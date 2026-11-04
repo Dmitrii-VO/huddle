@@ -24,7 +24,7 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            cmd: npx electron-builder --mac dmg --universal
+            cmd: npx electron-builder --mac dmg zip --universal # zip: what the app updates itself from
           - os: windows-latest
             cmd: npx electron-builder --win nsis
     runs-on: ${{ matrix.os }}
@@ -44,7 +44,7 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false # unsigned build
       # latest.yml + .blockmap are what the Windows updater reads.
-      - run: shopt -s nullglob; gh release upload "$GITHUB_REF_NAME" dist/*.dmg dist/*.exe dist/*.blockmap dist/latest*.yml --clobber
+      - run: shopt -s nullglob; gh release upload "$GITHUB_REF_NAME" dist/*.dmg dist/*.zip dist/*.exe dist/*.blockmap dist/latest*.yml --clobber
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}

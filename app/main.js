@@ -250,8 +250,8 @@ async function openLesson() {
     try {
       zip = await lessons.build(file, nativeImage, (text) => win?.webContents.send('lesson-progress', text));
     } catch (e) {
-      appLog({ lesson: 'build-error', msg: String(e.message).slice(0, 300) });
-      await ask({ parent: win, kind: 'warn', title: 'Не удалось подготовить презентацию', detail: String(e.message).slice(0, 300), buttons: ['Понятно'] });
+      appLog({ lesson: 'build-error', msg: String(e.message).slice(0, 600) });
+      await ask({ parent: win, kind: 'warn', title: 'Не удалось подготовить презентацию', detail: String(e.message).slice(0, 600), buttons: ['Понятно'] });
       return null;
     }
     appLog({ lesson: 'built', s: Math.round((Date.now() - t) / 1000), mb: +(zip.length / 1e6).toFixed(1) });
