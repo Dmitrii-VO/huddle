@@ -112,31 +112,48 @@ function numbered(dir) {
   return fs.readdirSync(dir).filter((f) => /\d+\.png$/i.test(f)).sort((a, b) => num(a) - num(b)).map((f) => fs.readFileSync(path.join(dir, f)));
 }
 
+const osa = (script) => new Promise((resolve, reject) => execFile('/usr/bin/osascript', ['-e', script], (err, stdout, stderr) =>
+  (err ? reject(new Error(`PowerPoint: ${stderr || err.message}`)) : resolve())));
+const pngsIn = (dir) => fs.readdirSync(dir, { recursive: true }).filter((f) => /\d+\.png$/i.test(f));
+
 // macOS: PowerPoint's "save as PNG" writes the slides into a folder; its picture size is its own choice,
-// build() scales to WIDTH.
-async function powerpoint(src, tmp) {
+// build() scales to WIDTH. The save can return before the pictures are all written, so wait until there are
+// as many as slides and the count holds, and close the deck only then (closing earlier may cut the export).
+async function powerpoint(src, tmp, expected) {
   const out = path.join(tmp, 'out');
-  const script = `with timeout of 3600 seconds
+  await osa(`with timeout of 3600 seconds
   tell application "Microsoft PowerPoint"
     open POSIX file "${src}"
-    set p to active presentation
-    save p in POSIX file "${out}" as save as PNG
-    close p saving no
+    save active presentation in POSIX file "${out}" as save as PNG
   end tell
-end timeout`;
-  await new Promise((resolve, reject) => execFile('/usr/bin/osascript', ['-e', script], (err, stdout, stderr) =>
-    (err ? reject(new Error(`PowerPoint: ${stderr || err.message}`)) : resolve())));
-  return numbered(fs.existsSync(out) && fs.statSync(out).isDirectory() ? out : tmp);
+end timeout`);
+  let last = -1, idle = 0;
+  for (;;) {
+    const n = pngsIn(tmp).length;
+    if (n >= expected && n === last) break;
+    idle = n === last ? idle + 1 : 0;
+    if (idle > 120) break; // a minute without a new picture: it has stopped
+    last = n;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  await osa(`tell application "Microsoft PowerPoint" to close (every presentation whose name is "deck.pptx") saving no`).catch(() => {});
+  const files = pngsIn(tmp);
+  if (files.length !== expected) {
+    const seen = fs.readdirSync(tmp, { recursive: true }).slice(0, 8).join(', ') || 'пусто';
+    throw new Error(`PowerPoint сохранил ${files.length} картинок вместо ${expected} (в папке: ${seen})`);
+  }
+  const num = (f) => +/(\d+)\.png$/i.exec(f)[1];
+  return files.sort((a, b) => num(a) - num(b)).map((f) => fs.readFileSync(path.join(tmp, f)));
 }
 
 // deck bytes → one PNG per slide, in order.
-async function render(deck, height) {
+async function render(deck, height, expected) {
   if (isMac) fs.mkdirSync(PPT_TMP, { recursive: true });
   const tmp = fs.mkdtempSync(path.join(isMac ? PPT_TMP : os.tmpdir(), 'huddle-')); // ASCII path: x2t fails on some non-latin ones
   try {
     const src = path.join(tmp, 'deck.pptx');
     fs.writeFileSync(src, deck);
-    if (isMac) return await powerpoint(src, tmp);
+    if (isMac) return await powerpoint(src, tmp, expected);
     if (hasPowerPoint()) {
       try { return await powerpointWin(src, tmp, height); } catch (e) { if (!hasOnlyoffice()) throw e; } // then ONLYOFFICE
     }
@@ -221,7 +238,7 @@ async function build(file, nativeImage, onProgress = () => {}) {
   z['ppt/presentation.xml'] = strToU8(pres.replace(/<p:sldIdLst>[\s\S]*?<\/p:sldIdLst>/, `<p:sldIdLst>${list}</p:sldIdLst>`));
 
   onProgress(`Готовлю ${order.length} слайдов, ${(deck.length - order.length) / 2} картинок-ответов…`);
-  const pngs = await render(zipSync(z, { level: 0 }), height);
+  const pngs = await render(zipSync(z, { level: 0 }), height, deck.length);
   if (pngs.length !== deck.length) throw new Error(`Получилось ${pngs.length} картинок вместо ${deck.length}`);
   const pic = (i) => {
     const im = nativeImage.createFromBuffer(pngs[i]);
