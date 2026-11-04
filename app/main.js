@@ -229,6 +229,14 @@ async function applyClick(m) {
   overlay?.webContents.send('ink', { t: 'ptr', x: m.x, y: m.y }); // I see where the child tapped
 }
 
+// PowerPoint comes to the front while it renders; the lesson is in Huddle, so Huddle goes back on top.
+function bringBack() {
+  if (!win) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  app.focus({ steal: true });
+}
+
 // "Презентация": the teacher picks a PPTX; built once (PowerPoint / ONLYOFFICE renders it, minutes), then cached by content.
 async function openLesson() {
   const { canceled, filePaths: [file] } = await dialog.showOpenDialog(win, { title: 'Презентация для урока', filters: [{ name: 'PowerPoint', extensions: ['pptx'] }], properties: ['openFile'] });
@@ -253,7 +261,9 @@ async function openLesson() {
         win?.webContents.send('lesson-progress', { text, p });
         if (p == null) appLog({ lesson: 'step', text, s: Math.round((Date.now() - t) / 1000) }); // where it got to, if it hangs
       });
+      bringBack();
     } catch (e) {
+      bringBack(); // so the message isn't hidden behind it
       appLog({ lesson: 'build-error', msg: String(e.message).slice(0, 600) });
       await ask({ parent: win, kind: 'warn', title: 'Не удалось подготовить презентацию', detail: String(e.message).slice(0, 600), buttons: ['Понятно'] });
       return null;
