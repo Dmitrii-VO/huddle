@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld('huddle', {
   barState: (s) => ipcRenderer.send('bar-state', s),
   onBarAction: on('bar-action'),
   onInkOut: on('ink-out'),
+  openLesson: () => ipcRenderer.invoke('lesson-open'),
+  onLessonProgress: on('lesson-progress'),
   // overlay
   onInk: on('ink'),
   onBanner: on('banner'),

@@ -21,7 +21,8 @@
       "dialogs.js",
       "prompt.html",
       "picker.html",
-      "recent.js"
+      "recent.js",
+      "lesson.js"
     ],
     "mac": {
       "x64ArchFiles": "**/node_modules/@koromix/koffi-darwin-*/**",
@@ -54,6 +55,7 @@
   },
   "dependencies": {
     "electron-updater": "^6.8.11",
+    "fflate": "^0.8.3",
     "koffi": "^3.3.5"
   }
 }

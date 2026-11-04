@@ -6,6 +6,8 @@ import { syncCam } from '/camwin.js';
 import { startDiag } from '/diag.js';
 import { PRESETS, applyScreen, autoCodec, autoStart, capCamera, preferCodec, probeCodecs, watchScreen } from '/quality.js';
 import { initSettings, loadSettings } from '/settings.js';
+import { createLesson } from '/lesson.js';
+import { createDevices } from '/devices.js';
 
 const $ = (id) => document.getElementById(id);
 const room = location.pathname.split('/')[2];
@@ -212,8 +214,8 @@ function render() {
   const cam = remoteStreams.get(remoteCamId) ?? null;
   if ($('screen').srcObject !== screen) $('screen').srcObject = screen;
   if ($('remote').srcObject !== cam) $('remote').srcObject = cam;
-  $('screen-wrap').hidden = !screen;
-  $('stage').classList.toggle('has-screen', !!screen);
+  $('screen-wrap').hidden = !screen || lesson.isOpen();
+  $('stage').classList.toggle('has-screen', !!screen || lesson.isOpen());
   $('remote-tile').classList.toggle('nocam', !cam?.getVideoTracks().length || !remoteState.cam);
   $('remote-tile').querySelector('.muted').toggleAttribute('hidden', remoteState.mic); // <svg> has no .hidden property
   $('local-tile').classList.toggle('nocam', !local.getVideoTracks()[0]?.enabled);
@@ -257,11 +259,16 @@ window.huddle?.onBarAction?.((a) => {
 });
 window.huddle?.onInkOut?.((m) => sendData(m));
 const reportMic = () => window.huddle?.barState?.({ mic: !!local.getAudioTracks()[0]?.enabled });
+// --- mic / camera (devices.js) ---
+const switchDevice = createDevices({ local, getPc: () => pc, render, sendState, reportMic, toast });
 // The teacher's "Ученик нажимает" switch on the bar (main.js keeps the real state and does the clicking).
 window.huddle?.onClicks?.((on) => {
   log({ ev: 'clicks', on });
   sendData({ t: 'clicks', on });
 });
+
+// --- presentation in Huddle (lesson.js; the desktop app builds it from a PPTX) ---
+const lesson = createLesson({ onChange: () => render(), toast });
 
 // --- chat (chat.js) ---
 const addMessage = createChat({ sendData, toast, fitInk });
@@ -309,30 +316,6 @@ initSettings({
     }
   },
 });
-
-// Swap camera / microphone mid-call without renegotiating (replaceTrack).
-async function switchDevice(kind, deviceId) {
-  let track;
-  try {
-    [track] = (await navigator.mediaDevices.getUserMedia({ [kind]: { deviceId: { exact: deviceId } } })).getTracks();
-  } catch (e) {
-    return toast(`Не удалось включить устройство: ${e.message}`);
-  }
-  const old = kind === 'video' ? local.getVideoTracks()[0] : local.getAudioTracks()[0];
-  const sender = old && pc?.getSenders().find((s) => s.track === old);
-  if (old) {
-    track.enabled = old.enabled;
-    local.removeTrack(old);
-    old.stop();
-  }
-  local.addTrack(track);
-  if (sender) await sender.replaceTrack(track);
-  else if (pc) pc.addTrack(track, local);
-  $(kind === 'video' ? 'cam' : 'mic').disabled = false;
-  $(kind === 'video' ? 'cam' : 'mic').classList.toggle('off', !track.enabled);
-  $('local').srcObject = local;
-  render();
-}
 
 function stopShare() {
   screenStream?.getTracks().forEach((t) => t.stop());
@@ -396,26 +379,6 @@ $('share').onclick = toggleShare;
 $('share').hidden = !navigator.mediaDevices?.getDisplayMedia; // phones can't share a screen
 $('stop-share').onclick = stopShare;
 
-// --- mic / camera ---
-function toggle(button, getTracks, labels) {
-  const label = button.querySelector('span');
-  if (!getTracks().length) {
-    button.disabled = true; // a device chosen in settings re-enables it
-    button.classList.add('off');
-  }
-  button.onclick = () => {
-    const tracks = getTracks();
-    const enabled = !tracks[0].enabled;
-    tracks.forEach((t) => (t.enabled = enabled));
-    button.classList.toggle('off', !enabled);
-    label.textContent = labels[enabled ? 0 : 1];
-    sendState();
-    reportMic();
-    render();
-  };
-}
-toggle($('mic'), () => local.getAudioTracks(), ['Выкл. звук', 'Вкл. звук']);
-toggle($('cam'), () => local.getVideoTracks(), ['Остановить видео', 'Включить видео']);
 
 // --- leave (layout, self view, fullscreen: view.js) ---
 $('leave').onclick = () => {
@@ -437,17 +400,6 @@ $('leave').onclick = () => {
 // --- diagnostics: 'Связь' indicator + stats/events in the server log (diag.js) ---
 startDiag({ getPc: () => pc, log, toast });
 
-// Desktop app too old for this page (missing bridge features): ask to update.
-const MIN_APP = '0.2.0';
-const olderThan = (a, b) => {
-  const [x, y] = [a, b].map((v) => v.split('.').map(Number));
-  const i = x.findIndex((n, k) => n !== y[k]);
-  return i !== -1 && x[i] < y[i];
-};
-if (window.huddle && olderThan(window.huddle.version ?? '0.1.0', MIN_APP)) $('old-app').hidden = false; // 0.1.x had no version
-
-// In a desktop browser, point to the app (phones can't install it).
-$('get-app').hidden = !!window.huddle || /iPhone|iPad|Android/.test(navigator.userAgent);
 
 $('copy').onclick = async () => {
   await navigator.clipboard.writeText(location.href);

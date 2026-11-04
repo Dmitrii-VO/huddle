@@ -1,12 +1,13 @@
 // Huddle desktop app: the website in a window, plus what a browser can't do while sharing the screen —
 // a click-through overlay for annotations, a floating control bar over full-screen slides,
 // and the other side's taps landing on my PowerPoint slides when I switch that on.
-const { app, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, screen, session, shell, systemPreferences } = require('electron');
+const { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeImage, nativeTheme, screen, session, shell, systemPreferences } = require('electron');
 const path = require('node:path');
 const os = require('node:os');
 const initUpdates = require('./updater');
 const { ask, pick } = require('./dialogs');
 const recent = require('./recent');
+const lessons = require('./lesson');
 
 const SITE = process.env.HUDDLE_URL || 'https://huddle.runterra.ru';
 const preload = path.join(__dirname, 'preload.js');
@@ -228,6 +229,36 @@ async function applyClick(m) {
   overlay?.webContents.send('ink', { t: 'ptr', x: m.x, y: m.y }); // I see where the child tapped
 }
 
+// "Презентация": the teacher picks a PPTX; built once (x2t renders it, a couple of minutes), then cached by content.
+async function openLesson() {
+  const { canceled, filePaths: [file] } = await dialog.showOpenDialog(win, { title: 'Презентация для урока', filters: [{ name: 'PowerPoint', extensions: ['pptx'] }], properties: ['openFile'] });
+  if (canceled || !file) return null;
+  const fs = require('node:fs');
+  const bytes = fs.readFileSync(file);
+  const dir = path.join(app.getPath('userData'), 'lessons');
+  const cached = path.join(dir, require('node:crypto').createHash('sha1').update(bytes).digest('hex') + '.zip');
+  let zip;
+  if (fs.existsSync(cached)) zip = fs.readFileSync(cached);
+  else {
+    if (!fs.existsSync(lessons.X2T) || !fs.existsSync(lessons.FONTS)) {
+      await ask({ parent: win, kind: 'warn', title: 'Нужен ONLYOFFICE', detail: 'Презентацию готовит ONLYOFFICE Desktop Editors: установите его и запустите один раз, затем попробуйте снова.', buttons: ['Понятно'] });
+      return null;
+    }
+    const t = Date.now();
+    try {
+      zip = await lessons.build(file, nativeImage, (text) => win?.webContents.send('lesson-progress', text));
+    } catch (e) {
+      appLog({ lesson: 'build-error', msg: String(e.message).slice(0, 300) });
+      await ask({ parent: win, kind: 'warn', title: 'Не удалось подготовить презентацию', detail: String(e.message).slice(0, 300), buttons: ['Понятно'] });
+      return null;
+    }
+    appLog({ lesson: 'built', s: Math.round((Date.now() - t) / 1000), mb: +(zip.length / 1e6).toFixed(1) });
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(cached, zip);
+  }
+  return require('fflate').unzipSync(zip); // { 'lesson.json': bytes, 's1.jpg': bytes, ... }
+}
+
 app.whenReady().then(() => {
   nativeTheme.themeSource = 'dark'; // dark title bar and system UI on Windows / macOS
   session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => {
@@ -293,6 +324,7 @@ app.whenReady().then(() => {
   ipcMain.on('click', (e, m) => fromWin(e) && applyClick(m));
   ipcMain.on('home', (e) => fromWin(e) && win.loadFile(path.join(__dirname, 'start.html'), { query: { site: SITE } }));
   ipcMain.on('clicks-off', (e) => fromWin(e) && setClicks(false));
+  ipcMain.handle('lesson-open', (e) => (fromWin(e) ? openLesson() : null));
 
   ipcMain.on('version', (e) => (e.returnValue = app.getVersion()));
   createWindow();
