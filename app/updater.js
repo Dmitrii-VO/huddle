@@ -117,7 +117,9 @@ ${relaunch ? 'open "$OLD"' : ''}`;
     app.quit();
   });
 
+  let lastCheck = 0;
   const check = async () => {
+    lastCheck = Date.now();
     try {
       const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`);
       const release = await res.json();
@@ -141,6 +143,8 @@ ${relaunch ? 'open "$OLD"' : ''}`;
   };
   check();
   setInterval(check, EVERY);
+  // On a Mac closing the window leaves the app running for days: look again when the teacher comes back to it.
+  app.on('browser-window-focus', () => { if (Date.now() - lastCheck > 30 * 60_000) check(); });
 };
 
 module.exports.newer = newer;
